@@ -58,6 +58,33 @@ For the flexible CLI launcher used in many campaigns:
 python3 train_wide.py --base-config <config.json> --epochs 50
 ```
 
+### Training input noise
+
+The optional top-level `noise` block supports `mode: "coherent"` (one fractional
+shift per event, the existing behavior) and `mode: "particle"` (an independent
+fractional shift per particle within each event). Each particle's draw is shared
+across its selected feature components. Both modes support Gaussian and uniform
+distributions. Only training batches are augmented; targets are unchanged.
+
+For a config that already selects noisy features, switch to independent particle
+shifts with:
+
+```bash
+python3 train_wide.py --base-config <config.json> --noise-mode particle
+```
+
+Add `--noise-name uniform --noise-low -0.2 --noise-high 0.2` for uniform fractional
+shifts between -20% and +20%. Gaussian `--noise-std 0.2` instead means a standard
+deviation of 20%; it is not a bound. In particle mode, event-level scalar inputs
+are unchanged by default because there is no unique particle draw to assign to
+them. Explicit CLI noise options override the corresponding JSON values, while
+omitted options preserve them. Use `--enable-noise` to add a block or
+`--disable-noise` to remove it for a run.
+
+See [Training input noise](docs/noise.md) for complete JSON examples, CLI options,
+scalar handling, and the distinction between independent particles and a
+species-dependent calibration variation.
+
 ### Checkpoint behavior
 
 Training now writes checkpoint files with clearer semantics:

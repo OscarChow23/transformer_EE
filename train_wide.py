@@ -9,10 +9,7 @@ import argparse
 from copy import deepcopy
 import hashlib
 
-from transformer_ee.train import MVtrainer
-from transformer_ee.logger.wandb_train_logger import WandBLogger
-import wandb
-import torch
+from transformer_ee.noise_config import validate_noise_config
 
 # ---------- Helpers ----------
 def kset(d, dotted_key, value):
@@ -168,6 +165,55 @@ def apply_profile(cfg, profile):
         fail_if(True, f"Unknown profile '{profile}'. Valid: legacy|wide|auto|token|newhead")
 
 
+def configure_noise(cfg, args):
+    """Merge explicit noise flags over JSON, then validate the effective block.
+
+    Noise arguments default to None, not their physical defaults. Otherwise a
+    bare CLI launch would silently replace the JSON distribution, width, or
+    correlation mode. This helper runs before opening logs, loading data, or
+    contacting W&B, so configuration errors cannot launch a partial run.
+
+    A noise block in JSON already enables augmentation. For a new block require
+    --enable-noise; tuning flags alone are rejected rather than silently ignored.
+    --disable-noise removes a JSON block and conflicts with tuning flags.
+    """
+    keys = ("name", "mode", "scalar_mode", "mean", "std", "low", "high", "vector", "scalar")
+    overrides = {
+        key: getattr(args, "noise_" + key)
+        for key in keys if getattr(args, "noise_" + key) is not None
+    }
+    if args.disable_noise:
+        if overrides:
+            raise ValueError("--disable-noise cannot be combined with noise tuning options")
+        cfg.pop("noise", None)
+        return
+    if "noise" not in cfg:
+        if not args.enable_noise:
+            if overrides:
+                raise ValueError("Noise options require --enable-noise or a noise block in the base JSON")
+            return
+        # Keep the historical launcher feature selections. They are GENIE field
+        # names, not a safe detector-independent guess. For other datasets pass
+        # explicit --noise-vector/--noise-scalar lists (an empty list is allowed).
+        cfg["noise"] = {
+            "vector": [
+                "Final_State_Particles_Energy",
+                "Final_State_Particles_Momentum_X",
+                "Final_State_Particles_Momentum_Y",
+                "Final_State_Particles_Momentum_Z",
+                "Final_State_Particles_CosTheta",
+                "Final_State_Particles_Theta",
+            ],
+            "scalar": ["tot_fKE", "tot_hadronic_energy", "p_tot", "P_miss"],
+        }
+    if not isinstance(cfg["noise"], dict):
+        raise ValueError("noise must be a configuration object")
+    merged = deepcopy(cfg["noise"])
+    merged.update(overrides)
+    candidate = dict(cfg, noise=merged)
+    cfg["noise"] = validate_noise_config(candidate)
+
+
 # ---------- CLI ----------
 def build_argparser():
     p = argparse.ArgumentParser(
@@ -188,42 +234,61 @@ def build_argparser():
     p.add_argument("--dataframe-type", default="polars")
     p.add_argument("--num-workers", type=int, default=10)
 
-     # ---------- Noise configuration ----------
-    p.add_argument(
+    # Correlation and distribution are separate switches. Every optional value
+    # stays None until configuration merging so untouched JSON retains priority.
+    noise_enable = p.add_mutually_exclusive_group()
+    noise_enable.add_argument(
         "--enable-noise",
         action="store_true",
-        help="Enable input noise as in train_script.py example."
+        help="Create a noise block if JSON has none (Gaussian coherent defaults)."
+    )
+    noise_enable.add_argument(
+        "--disable-noise", action="store_true",
+        help="Disable augmentation even when the base JSON contains a noise block."
     )
     p.add_argument(
         "--noise-name",
-        default="gaussian",
-        help="Noise type (default: gaussian)."
+        choices=["gaussian", "uniform"], default=None,
+        help="Fractional noise distribution; overrides JSON (new-block default: gaussian)."
+    )
+    p.add_argument(
+        "--noise-mode", choices=["coherent", "particle"], default=None,
+        help="One draw per event or per particle, shared over selected features (default: coherent)."
+    )
+    p.add_argument(
+        "--noise-scalar-mode", choices=["auto", "none", "coherent"], default=None,
+        help="auto: share event draw in coherent mode, leave scalars unchanged in particle mode; "
+             "coherent: separate scalar event draw in particle mode; none: unchanged."
     )
     p.add_argument(
         "--noise-mean",
         type=float,
-        default=0.0,
-        help="Mean of the noise distribution (default: 0.0)."
+        default=None,
+        help="Gaussian fractional mean; overrides JSON (default: 0.0)."
     )
     p.add_argument(
         "--noise-std",
         type=float,
-        default=0.2,
-        help="Std of the noise distribution (default: 0.2)."
+        default=None,
+        help="Gaussian fractional standard deviation; overrides JSON (default: 0.2)."
     )
-    # If you want to override the default variable lists from the CLI, you can
-    # allow them as space-separated lists; otherwise we'll hardcode the train_script ones.
+    p.add_argument("--noise-low", type=float, default=None,
+                   help="Uniform lower fractional bound; overrides JSON (default: -0.2).")
+    p.add_argument("--noise-high", type=float, default=None,
+                   help="Uniform upper fractional bound; overrides JSON (default: 0.2).")
+    # nargs='*' deliberately distinguishes no flag (None: keep JSON) from a
+    # flag with no names ([]: clear selection), useful for vector-only studies.
     p.add_argument(
         "--noise-vector",
-        nargs="+",
+        nargs="*",
         default=None,
-        help="Vector variable names for noise; if omitted, use train_script defaults."
+        help="Selected vector names; overrides JSON. Pass no names to clear selection."
     )
     p.add_argument(
         "--noise-scalar",
-        nargs="+",
+        nargs="*",
         default=None,
-        help="Scalar variable names for noise; if omitted, use train_script defaults."
+        help="Selected scalar names; overrides JSON. Pass no names to clear selection."
     )
 
     # Training / Optim
@@ -317,6 +382,19 @@ def main():
     with open(args.base_config, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
+    try:
+        configure_noise(cfg, args)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    # Keep --help and configuration validation usable without importing torch,
+    # dataframe libraries, or the optional W&B client. Actual training retains
+    # the same dependencies; importing them here also avoids opening a log file
+    # before discovering a missing runtime dependency.
+    from transformer_ee.train import MVtrainer
+    from transformer_ee.logger.wandb_train_logger import WandBLogger
+    import torch
+
     # Optional save-path uniquification. This is intentionally opt-in so legacy behavior
     # remains unchanged unless a caller explicitly wants local run folders to never collide.
     kset(cfg, "save_path", args.save_path)
@@ -353,37 +431,9 @@ def main():
         ckpt_cfg["keep_last_n_epoch_checkpoints"] = int(args.keep_last_n_epoch_checkpoints)
         cfg["checkpointing"] = ckpt_cfg
 
-    # --- Optional noise configuration (mirrors train_script.py example) ---
+    # Log the effective, validated noise block, including explicit defaults, so
+    # checkpoints/W&B record the correlation mode used for this particular run.
     if "noise" in cfg:
-        print("[INFO] Noise configuration enabled:", cfg["noise"])
-
-    elif args.enable_noise:
-        # Defaults from your train_script.py example:
-        default_vector = [
-            "Final_State_Particles_Energy",
-            "Final_State_Particles_Momentum_X",
-            "Final_State_Particles_Momentum_Y",
-            "Final_State_Particles_Momentum_Z",
-            "Final_State_Particles_CosTheta",
-            "Final_State_Particles_Theta",
-        ]
-        default_scalar = [
-            "tot_fKE",
-            "tot_hadronic_energy",
-            "p_tot",
-            "P_miss",
-        ]
-
-        vector_vars = args.noise_vector if args.noise_vector is not None else default_vector
-        scalar_vars = args.noise_scalar if args.noise_scalar is not None else default_scalar
-
-        cfg["noise"] = {
-            "name": args.noise_name,
-            "mean": args.noise_mean,
-            "std": args.noise_std,
-            "vector": vector_vars,
-            "scalar": scalar_vars,
-        }
         print("[INFO] Noise configuration enabled:", cfg["noise"])
 
 
