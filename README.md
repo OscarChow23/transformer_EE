@@ -67,17 +67,24 @@ across its selected feature components. Both modes support Gaussian and uniform
 distributions. Only training batches are augmented; targets are unchanged.
 
 For a config that already selects noisy features, switch to independent particle
-shifts with:
+shifts and leave scalars unchanged with:
 
 ```bash
-python3 train_wide.py --base-config <config.json> --noise-mode particle
+python3 train_wide.py --base-config <config.json> \
+  --noise-mode particle --noise-scalar-mode none
 ```
 
 Add `--noise-name uniform --noise-low -0.2 --noise-high 0.2` for uniform fractional
 shifts between -20% and +20%. Gaussian `--noise-std 0.2` instead means a standard
-deviation of 20%; it is not a bound. In particle mode, event-level scalar inputs
-are unchanged by default because there is no unique particle draw to assign to
-them. Explicit CLI noise options override the corresponding JSON values, while
+deviation of 20%; it is not a bound. Event-level scalars can share the coherent
+vector draw (`--noise-scalar-mode coherent`, requiring coherent vector mode),
+receive an independent draw for each selected scalar (`independent`), or share
+the arithmetic mean of the actual particle draws (`particle_mean`, requiring
+particle vector mode). The default `auto` shares the coherent event draw in
+coherent mode and leaves scalars unchanged in particle mode. The particle mean
+excludes padding and is not an energy-weighted recomputation of a scalar total.
+
+Explicit CLI noise options override the corresponding JSON values, while
 omitted options preserve them. Use `--enable-noise` to add a block or
 `--disable-noise` to remove it for a run.
 

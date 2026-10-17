@@ -63,19 +63,56 @@ energy. `noise.scalar_mode` makes its treatment explicit:
 | --- | --- | --- |
 | `auto` (default) | Selected scalars share the vector event draw | Scalars are unchanged |
 | `none` | Scalars are unchanged | Scalars are unchanged |
-| `coherent` | Selected scalars share the vector event draw | Selected scalars share a separate, independent draw per event |
+| `coherent` | Selected scalars share the exact vector event draw | Invalid combination |
+| `independent` | Each selected scalar receives its own independent draw | Each selected scalar receives its own independent draw |
+| `particle_mean` | Invalid combination | Selected scalars share the arithmetic mean of the event's actual particle draws |
 
 Only scalars named in `noise.scalar` are eligible for changes. Empty feature
 lists disable noise for that input category. In particle mode, an existing
 scalar list is intentionally inactive under `scalar_mode: "auto"`.
 
+`independent` draws a tensor of shape `(batch_size, number_of_selected_scalars)`
+from the same distribution and parameters used for vector noise. These draws
+are independent across scalars and events, and independent of the vector draws.
+Two selected scalars in the same event therefore need not receive the same
+fractional change.
+
+`particle_mean` reuses the draws already applied to the retained, unmasked
+particles; it does not draw new noise or average separately over feature
+components. It requires `mode: "particle"` and a nonempty `noise.vector` list.
+For an event with `N` retained, unmasked particles, every selected scalar receives
+the fractional change
+
+```text
+delta_scalar = (delta_particle_1 + ... + delta_particle_N) / N
+```
+
+Padding never contributes to this mean. If an event has no unmasked particles,
+its scalars remain unchanged. For example, particle draws of +10% and -5%
+produce a scalar change of +2.5%, irrespective of the particle energies or the
+number of selected feature components.
+
+For independent particle draws with variance `sigma^2`, the mean has variance
+`sigma^2 / N` and standard deviation `sigma / sqrt(N)` at fixed `N`. Its mean
+equals the mean of the underlying distribution. A mean of Gaussian draws is
+Gaussian; a mean of multiple uniform draws is generally not uniform. Events
+with different particle counts therefore have different scalar-noise widths.
+
 The noiser does not infer or recompute scalar totals from perturbed particle
 features. Leaving totals unchanged is an augmentation policy, not a guarantee
-of a physically consistent calibration shift. Explicit scalar noising in
-particle mode also does not enforce such consistency: its event draw is
-independent of all particle draws. For calibration studies requiring dependent
-quantities to agree, propagate the underlying particle changes into those
-quantities using their physical definitions.
+of a physically consistent calibration shift. `particle_mean` uses an
+**unweighted** arithmetic mean: a total defined as a sum of particle energies
+would instead require an energy-weighted fractional change. Neither it nor
+`independent` guarantees that such a scalar total agrees with the perturbed
+particle inputs. For calibration studies requiring dependent quantities to
+agree, propagate the underlying particle changes into those quantities using
+their physical definitions.
+
+The earlier `mode: "particle", scalar_mode: "coherent"` combination, which drew
+a separate common scalar shift, is now rejected. Use `independent` for separate
+per-scalar draws or `particle_mean` for a shared scalar shift derived from the
+particle draws. `coherent` now always means sharing the exact coherent vector
+event draw.
 
 ## JSON configuration
 
@@ -90,7 +127,7 @@ must match exactly. This fragment reproduces coherent Gaussian augmentation:
     "mode": "coherent",
     "mean": 0.0,
     "std": 0.2,
-    "scalar_mode": "auto",
+    "scalar_mode": "coherent",
     "vector": [
       "png.calE",
       "png.bpf[0].overlapE",
@@ -125,10 +162,43 @@ use this alternative block:
 ```
 
 The examples are configuration fragments, not complete training configs. To
-use particle Gaussian noise, set `mode` to `particle` in the first example;
-`scalar_mode: "auto"` then leaves the scalars unchanged. To use coherent uniform
+use particle Gaussian noise without scalar noise, set `mode` to `particle`
+and `scalar_mode` to `auto` or `none` in the first example. To use coherent uniform
 noise, set `mode` to `coherent` in the second example and select scalar fields
 with `scalar_mode: "auto"` if they should share the event shift.
+
+For independent draws for each selected scalar, this Gaussian example uses
+particle vector noise; `mode: "coherent"` is also supported:
+
+```json
+{
+  "noise": {
+    "name": "gaussian",
+    "mode": "particle",
+    "mean": 0.0,
+    "std": 0.2,
+    "scalar_mode": "independent",
+    "vector": ["png.calE"],
+    "scalar": ["calE", "orphCalE"]
+  }
+}
+```
+
+For scalars that share the mean of the actual unmasked particle shifts:
+
+```json
+{
+  "noise": {
+    "name": "uniform",
+    "mode": "particle",
+    "low": -0.2,
+    "high": 0.2,
+    "scalar_mode": "particle_mean",
+    "vector": ["png.calE"],
+    "scalar": ["calE", "orphCalE"]
+  }
+}
+```
 
 Existing Gaussian JSON blocks without `mode` or `scalar_mode` retain their
 coherent behavior. Omitting the entire `noise` block disables augmentation.
@@ -147,7 +217,7 @@ CLI options update the top-level `noise` block before training:
 | `--noise-low VALUE` / `--noise-high VALUE` | Set uniform parameters |
 | `--noise-vector [NAME ...]` | Replace the selected vector feature list |
 | `--noise-scalar [NAME ...]` | Replace the selected scalar feature list |
-| `--noise-scalar-mode auto\|none\|coherent` | Set event-level scalar handling |
+| `--noise-scalar-mode auto\|none\|coherent\|independent\|particle_mean` | Set event-level scalar handling |
 
 An explicitly supplied option overrides its corresponding JSON value. An
 omitted option preserves the JSON value. Distribution defaults are supplied
@@ -155,10 +225,31 @@ when the relevant parameters are absent. Noise-tuning options require an
 existing JSON noise block or `--enable-noise`; they do not silently enable
 augmentation. `--enable-noise` and `--disable-noise` are mutually exclusive.
 
-For an existing coherent Gaussian noise block, override only the correlation:
+For an existing noise block, choose one of the three explicit scalar policies.
+These examples select two scalar fields; substitute names from your config.
+
+Share the exact coherent vector event draw:
 
 ```bash
-python3 train_wide.py --base-config config.json --noise-mode particle
+python3 train_wide.py --base-config config.json \
+  --noise-mode coherent --noise-scalar-mode coherent \
+  --noise-scalar calE orphCalE
+```
+
+Use particle vector noise and independent draws for each selected scalar:
+
+```bash
+python3 train_wide.py --base-config config.json \
+  --noise-mode particle --noise-scalar-mode independent \
+  --noise-scalar calE orphCalE
+```
+
+Use particle vector noise and apply its event mean to selected scalars:
+
+```bash
+python3 train_wide.py --base-config config.json \
+  --noise-mode particle --noise-scalar-mode particle_mean \
+  --noise-vector 'png.calE' --noise-scalar calE orphCalE
 ```
 
 For a config without a noise block, enable particle uniform noise with an

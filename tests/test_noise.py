@@ -10,6 +10,7 @@ import importlib.util
 from pathlib import Path
 import pickle
 import unittest
+from unittest.mock import patch
 
 import torch
 from torch.utils.data import DataLoader
@@ -74,16 +75,19 @@ class NoiseBehaviorTests(unittest.TestCase):
 
     def test_constant_shifts_reproduce_physical_multiplication(self):
         """Both distributions and modes obey x -> (1 + epsilon) x."""
-        for mode in ("coherent", "particle"):
+        for mode, scalar_mode in (
+            ("coherent", "coherent"), ("coherent", "independent"),
+            ("particle", "independent"), ("particle", "particle_mean"),
+        ):
             for distribution, parameters in (
                 ("gaussian", {"mean": 0.25, "std": 0.0}),
                 ("uniform", {"low": 0.25, "high": 0.25}),
             ):
-                with self.subTest(mode=mode, distribution=distribution):
+                with self.subTest(mode=mode, scalar_mode=scalar_mode, distribution=distribution):
                     batch = make_batch()
                     before = default_collate(batch)
                     after = normalized_noise(make_config(
-                        mode=mode, name=distribution, scalar_mode="coherent",
+                        mode=mode, name=distribution, scalar_mode=scalar_mode,
                         **parameters), STATS)(batch)
                     selected = ~before[2]
                     self.assertTensorClose(
@@ -160,18 +164,93 @@ class NoiseBehaviorTests(unittest.TestCase):
             physical(after[1], SCALAR_NAMES)[:, :2],
             physical(before[1], SCALAR_NAMES)[:, :2] * (1 + event_draws[:, None]))
 
-    def test_particle_scalar_opt_in_uses_a_separate_shared_event_draw(self):
+    def test_independent_scalar_features_use_their_own_sequential_draws(self):
+        for mode in ("coherent", "particle"):
+            for distribution in ("gaussian", "uniform"):
+                with self.subTest(mode=mode, distribution=distribution):
+                    batch = make_batch()
+                    # Independent scalar noise still applies to an event with
+                    # no retained particles. Its policy does not use the mask.
+                    batch[2][2][:] = True
+                    batch[2][0][:] = 0.0
+                    batch[0][1][0] = -STATS["total"][0] / STATS["total"][1]
+                    batch[0][1][1] = (-4 - STATS["remainder"][0]) / STATS["remainder"][1]
+                    before = default_collate(batch)
+                    config = make_config(mode=mode, name=distribution,
+                                         low=-0.2, high=0.2,
+                                         scalar_mode="independent",
+                                         scalar=["remainder", "total"])
+
+                    def sample(size):
+                        if distribution == "gaussian":
+                            return torch.normal(mean=0.0, std=0.2, size=size)
+                        return -0.2 + torch.rand(size=size) * 0.4
+
+                    torch.manual_seed(201)
+                    vector_shape = (3,) if mode == "coherent" else (3, 4)
+                    expected_vector = sample(vector_shape)
+                    expected_scalar = sample((3, 2))
+                    torch.manual_seed(201)
+                    after = normalized_noise(config, STATS)(batch)
+                    changes = fractional_changes(before[0], after[0])
+                    expected_vector = (expected_vector[:, None].expand(3, 4)
+                                       if mode == "coherent" else expected_vector)
+                    self.assertTensorClose(changes[~before[2], 0], expected_vector[~before[2]])
+                    # Feature selection order determines the independent draws;
+                    # selection here is deliberately reversed to detect mixing.
+                    self.assertTensorClose(
+                        physical(after[1], SCALAR_NAMES)[:, [1, 0]],
+                        physical(before[1], SCALAR_NAMES)[:, [1, 0]] * (1 + expected_scalar))
+                    self.assertTrue(torch.all(expected_scalar[:, 0] != expected_scalar[:, 1]))
+                    self.assertTrue(torch.equal(after[1][:, 2], before[1][:, 2]))
+                    self.assertFalse(torch.equal(after[1][2, :2], before[1][2, :2]))
+
+    def test_particle_mean_reuses_only_real_particle_draws_without_energy_weighting(self):
+        for distribution in ("gaussian", "uniform"):
+            with self.subTest(distribution=distribution):
+                batch = make_batch()
+                batch[2][2][:] = True
+                batch[2][0][:] = 0.0
+                # Scalar normalization includes physical zeros and negatives.
+                batch[0][1][0] = -STATS["total"][0] / STATS["total"][1]
+                batch[0][1][1] = (-4 - STATS["remainder"][0]) / STATS["remainder"][1]
+                before = default_collate(batch)
+                throws = torch.tensor([
+                    [-0.1, 0.2, 0.05, 0.2],   # Last particle is padding: mean=0.05.
+                    [-0.1, 0.1, 0.2, 0.2],    # Four real particles: mean=0.1.
+                    [0.2, 0.2, 0.2, 0.2],     # No real particles: mean=0, not 0.2.
+                ])
+                mean = torch.tensor([0.05, 0.1, 0.0])
+                noiser = normalized_noise(make_config(mode="particle", name=distribution,
+                                                     scalar_mode="particle_mean"), STATS)
+                # A second draw would exhaust side_effect and fail. The scalar
+                # mean must use the very draws that moved the vector entries.
+                with patch.object(noiser, "noise", side_effect=[throws]) as sampler:
+                    after = noiser(batch)
+                sampler.assert_called_once_with(size=(3, 4))
+                changes = fractional_changes(before[0], after[0])
+                for feature in (0, 1):
+                    self.assertTensorClose(changes[~before[2], feature], throws[~before[2]])
+                self.assertTensorClose(
+                    physical(after[1], SCALAR_NAMES)[:, :2],
+                    physical(before[1], SCALAR_NAMES)[:, :2] * (1 + mean[:, None]))
+                self.assertTrue(torch.equal(after[1][2], before[1][2]))
+                self.assertTrue(torch.equal(after[0][before[2]], before[0][before[2]]))
+                self.assertTrue(torch.equal(after[1][:, 2], before[1][:, 2]))
+
+    def test_particle_mean_of_one_real_particle_is_its_exact_fractional_shift(self):
         batch = make_batch()
+        batch[0][2][:] = True
+        batch[0][2][1] = False
         before = default_collate(batch)
-        torch.manual_seed(201)
-        after = normalized_noise(make_config(
-            mode="particle", scalar_mode="coherent"), STATS)(batch)
-        original_scalar = physical(before[1], SCALAR_NAMES)
-        scalar_changes = (physical(after[1], SCALAR_NAMES) - original_scalar) / original_scalar
-        self.assertTensorClose(scalar_changes[:, 0], scalar_changes[:, 1])
-        particle_changes = fractional_changes(before[0], after[0])[:, :, 0]
-        self.assertTrue(torch.all(particle_changes[~before[2]] !=
-                                  scalar_changes[:, 0, None].expand_as(particle_changes)[~before[2]]))
+        throws = torch.tensor([[0.2, -0.3, 0.4, 0.5],
+                               [0.1, 0.2, 0.3, 0.4],
+                               [0.2, 0.4, 0.6, 0.8]])
+        noiser = normalized_noise(make_config(mode="particle", scalar_mode="particle_mean"), STATS)
+        with patch.object(noiser, "noise", return_value=throws):
+            after = noiser(batch)
+        self.assertTensorClose(physical(after[1], SCALAR_NAMES)[0, :2],
+                               physical(before[1], SCALAR_NAMES)[0, :2] * 0.7)
 
     def test_explicit_scalar_none_preserves_scalars_in_coherent_mode(self):
         batch = make_batch()
@@ -179,11 +258,13 @@ class NoiseBehaviorTests(unittest.TestCase):
         self.assertTrue(torch.equal(default_collate(batch)[1], after[1]))
 
     def test_padding_unselected_features_and_cached_samples_are_unchanged(self):
-        for mode in ("coherent", "particle"):
-            with self.subTest(mode=mode):
+        for mode, scalar_mode in (("coherent", "auto"), ("particle", "auto"),
+                                  ("coherent", "independent"), ("particle", "independent"),
+                                  ("particle", "particle_mean")):
+            with self.subTest(mode=mode, scalar_mode=scalar_mode):
                 batch = make_batch()
                 before = default_collate(batch)
-                after = normalized_noise(make_config(mode=mode), STATS)(batch)
+                after = normalized_noise(make_config(mode=mode, scalar_mode=scalar_mode), STATS)(batch)
                 self.assertTrue(torch.equal(after[0][before[2]], before[0][before[2]]))
                 self.assertTrue(torch.equal(after[0][:, :, 2], before[0][:, :, 2]))
                 self.assertTrue(torch.equal(after[1][:, 2], before[1][:, 2]))
@@ -229,14 +310,17 @@ class NoiseBehaviorTests(unittest.TestCase):
 
     def test_noiser_survives_pickle_and_spawn_dataloader_worker(self):
         """A lambda sampler would fail Windows/spawn DataLoader workers."""
-        for mode in ("coherent", "particle"):
+        for mode, scalar_mode in (("coherent", "auto"), ("particle", "auto"),
+                                  ("coherent", "independent"), ("particle", "independent"),
+                                  ("particle", "particle_mean")):
             for name, parameters in (
                 ("gaussian", {"mean": 0.2, "std": 0.0}),
                 ("uniform", {"low": 0.2, "high": 0.2}),
             ):
-                with self.subTest(mode=mode, distribution=name):
+                with self.subTest(mode=mode, scalar_mode=scalar_mode, distribution=name):
                     noiser = pickle.loads(pickle.dumps(normalized_noise(
-                        make_config(mode=mode, name=name, **parameters), STATS)))
+                        make_config(mode=mode, scalar_mode=scalar_mode,
+                                    name=name, **parameters), STATS)))
                     batch = make_batch()
                     loader = DataLoader(batch, batch_size=len(batch), num_workers=1,
                                         multiprocessing_context="spawn", collate_fn=noiser,
@@ -265,6 +349,25 @@ class NoiseConfigurationTests(unittest.TestCase):
         self.assertEqual(result["high"], 0.2)
         validate_noise_config(make_config(std=0.0))
         validate_noise_config(make_config(name="uniform", low=0.1, high=0.1))
+
+    def test_scalar_policy_combinations_are_validated(self):
+        valid = (
+            ("coherent", "auto"), ("coherent", "none"), ("coherent", "coherent"),
+            ("coherent", "independent"), ("particle", "auto"), ("particle", "none"),
+            ("particle", "independent"), ("particle", "particle_mean"),
+        )
+        for mode, scalar_mode in valid:
+            with self.subTest(mode=mode, scalar_mode=scalar_mode):
+                result = validate_noise_config(make_config(mode=mode, scalar_mode=scalar_mode))
+                self.assertEqual(result["scalar_mode"], scalar_mode)
+        for overrides in (
+            {"mode": "particle", "scalar_mode": "coherent"},
+            {"mode": "coherent", "scalar_mode": "particle_mean"},
+            {"mode": "particle", "scalar_mode": "particle_mean", "vector": []},
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValueError):
+                    validate_noise_config(make_config(**overrides))
 
     def test_invalid_statistics_fail_before_loading_training_batches(self):
         for mean, std in ((float("nan"), 1.0), (float("inf"), 1.0),
@@ -346,11 +449,33 @@ class NoiseCLITests(unittest.TestCase):
 
     def test_explicit_scalar_policy_and_empty_feature_lists(self):
         config = make_config()
-        self.apply_cli(config, "--noise-mode", "particle", "--noise-scalar-mode", "coherent",
+        self.apply_cli(config, "--noise-mode", "particle", "--noise-scalar-mode", "independent",
                        "--noise-vector", "--noise-scalar", "total")
-        self.assertEqual(config["noise"]["scalar_mode"], "coherent")
+        self.assertEqual(config["noise"]["scalar_mode"], "independent")
         self.assertEqual(config["noise"]["vector"], [])
         self.assertEqual(config["noise"]["scalar"], ["total"])
+
+    def test_cli_supports_all_three_explicit_scalar_policies(self):
+        for mode, scalar_mode in (("coherent", "coherent"),
+                                  ("coherent", "independent"),
+                                  ("particle", "independent"),
+                                  ("particle", "particle_mean")):
+            with self.subTest(mode=mode, scalar_mode=scalar_mode):
+                config = make_config()
+                self.apply_cli(config, "--noise-mode", mode,
+                               "--noise-scalar-mode", scalar_mode)
+                self.assertEqual(config["noise"]["scalar_mode"], scalar_mode)
+                normalized_noise(config, STATS)(make_batch())
+
+    def test_cli_rejects_incompatible_scalar_policy_and_vector_mode(self):
+        for mode, scalar_mode in (("particle", "coherent"), ("coherent", "particle_mean")):
+            with self.subTest(mode=mode, scalar_mode=scalar_mode):
+                with self.assertRaises(ValueError):
+                    self.apply_cli(make_config(), "--noise-mode", mode,
+                                   "--noise-scalar-mode", scalar_mode)
+        with self.assertRaises(ValueError):
+            self.apply_cli(make_config(), "--noise-mode", "particle",
+                           "--noise-scalar-mode", "particle_mean", "--noise-vector")
 
     def test_disable_removes_json_noise_and_absent_noise_stays_absent(self):
         config = make_config()

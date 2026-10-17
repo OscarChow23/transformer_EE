@@ -23,7 +23,7 @@ def validate_noise_config(config):
     for key, default, choices in (
         ("name", "gaussian", ("gaussian", "uniform")),
         ("mode", "coherent", ("coherent", "particle")),
-        ("scalar_mode", "auto", ("auto", "none", "coherent")),
+        ("scalar_mode", "auto", ("auto", "none", "coherent", "independent", "particle_mean")),
     ):
         value = noise.setdefault(key, default)
         if value not in choices:
@@ -56,4 +56,22 @@ def validate_noise_config(config):
         missing = [name for name in names if name not in config.get(kind, [])]
         if missing:
             raise ValueError(f"noise.{kind} contains unknown input features: {missing}")
+
+    # Coherent scalar noise now means EXACTLY the same draw as coherent vector
+    # noise. Do not silently invent a second event draw when vectors are being
+    # smeared particle by particle. A separate per-feature scalar nuisance is
+    # explicitly available through "independent" instead.
+    if noise["scalar_mode"] == "coherent" and noise["mode"] != "coherent":
+        raise ValueError(
+            "noise.scalar_mode='coherent' requires noise.mode='coherent'; "
+            "for particle noise choose 'independent', 'particle_mean', or 'none'"
+        )
+    # An average is defined over actual particle shifts. Requiring selected
+    # vector fields prevents a scalar-only configuration from silently averaging
+    # unused random draws that never perturbed any particle input.
+    if noise["scalar_mode"] == "particle_mean":
+        if noise["mode"] != "particle":
+            raise ValueError("noise.scalar_mode='particle_mean' requires noise.mode='particle'")
+        if not noise["vector"]:
+            raise ValueError("noise.scalar_mode='particle_mean' requires selected noise.vector features")
     return noise

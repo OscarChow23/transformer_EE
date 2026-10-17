@@ -43,12 +43,21 @@ class normalized_noise:
         }
 
     For uniform draws use name="uniform", low=-0.2, high=0.2 instead.
-    scalar_mode="auto" shares the coherent event draw with scalars in coherent
-    mode, but leaves scalars unchanged in particle mode. Explicit "coherent" in
-    particle mode draws a SEPARATE event shift for all selected scalars; "none"
-    always leaves scalars unchanged. Scalars are never recomputed from particles:
-    that requires a problem-specific mapping of retained prongs, orphan energy,
-    thresholds, and other contributions.
+    Scalar policies (all act only on fields listed in noise.scalar):
+
+    * "coherent": reuse the EXACT coherent vector event draw. This requires
+      coherent vector mode; it never draws a separate scalar event nuisance.
+    * "independent": a separate draw for each selected scalar feature in each
+      event, independent of the vector draws, from the configured distribution.
+    * "particle_mean": reuse the arithmetic mean of the valid particles' draws
+      as one shared scalar shift. This requires particle vector mode and selected
+      vector features. Padding is excluded; an empty event has zero scalar shift.
+    * "auto" (default): coherent vectors use coherent scalars; particle vectors
+      leave scalars unchanged. "none" always leaves scalars unchanged.
+
+    The arithmetic particle mean is unweighted; it is not the fractional change
+    of a sum of unequal particle energies. No policy recomputes scalar totals:
+    that requires a mapping of retained prongs, orphan energy, and other terms.
     """
 
     def __init__(self, config, stats):
@@ -136,13 +145,35 @@ class normalized_noise:
             # masks out; real coherent entries retain the historical arithmetic.
             vector[:, :, self.vector_indices] = torch.where(mask[:, :, None], selected, shifted)
 
-        if self.scalar_indices and self.scalar_mode == "coherent":
-            # Particle draws have no unique scalar equivalent. An explicit
-            # scalar opt-in uses a separate event draw, never an arbitrary
-            # particle's draw or an unweighted average of particle shifts.
-            if event_noise is None:
-                event_noise = self.noise(size=(batch_size,))
-            epsilon = event_noise.to(scalar)[:, None]
+        if self.scalar_indices and self.scalar_mode != "none":
+            if self.scalar_mode == "coherent":
+                # Validation guarantees coherent vector mode here. Reusing its
+                # draw preserves identical physical fractional changes across
+                # every selected particle, vector feature, and scalar feature.
+                epsilon = event_noise.to(scalar)[:, None]
+            elif self.scalar_mode == "independent":
+                # (B, S_selected) has NO singleton feature axis: every selected
+                # scalar gets its own throw. Draw after vector noise so the
+                # scalar policy does not change this batch's vector draws.
+                epsilon = self.noise(size=(batch_size, len(self.scalar_indices))).to(scalar)
+            else:  # particle_mean: validated particle mode with vector selections
+                # Reuse the actual epsilon for each particle; do NOT resample,
+                # average noisy feature values, or count each selected feature
+                # as another particle. Padded slots consumed draws above but
+                # are excluded from both numerator and denominator here.
+                particle_noise = vector_noise[:, :, 0].to(scalar)
+                valid = (~mask).to(device=scalar.device)
+                total = particle_noise.masked_fill(~valid, 0).sum(dim=1)
+                count = valid.sum(dim=1)
+                # For an event with no retained particles, total is zero and
+                # clamping the denominator gives zero noise without NaN or an
+                # arbitrary fallback draw. Nonempty events use the exact count.
+                epsilon = (total / count.clamp_min(1))[:, None]
+                # This is an UNWEIGHTED arithmetic mean. For Gaussian particle
+                # noise its std is sigma/sqrt(N); the mean of uniform draws is
+                # generally not uniform. It is also not the energy-weighted
+                # fractional shift needed to reconstruct an energy sum.
+
             correction = self.scalar_correction.to(scalar)[None, :]
             selected = scalar[:, self.scalar_indices]
             scalar[:, self.scalar_indices] = selected + (

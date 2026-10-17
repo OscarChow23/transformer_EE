@@ -256,9 +256,12 @@ def build_argparser():
         help="One draw per event or per particle, shared over selected features (default: coherent)."
     )
     p.add_argument(
-        "--noise-scalar-mode", choices=["auto", "none", "coherent"], default=None,
-        help="auto: share event draw in coherent mode, leave scalars unchanged in particle mode; "
-             "coherent: separate scalar event draw in particle mode; none: unchanged."
+        "--noise-scalar-mode",
+        choices=["auto", "none", "coherent", "independent", "particle_mean"], default=None,
+        help="auto: share coherent vector draw, leave scalars unchanged in particle mode; "
+             "coherent: same draw as coherent vectors (requires coherent mode); "
+             "independent: own draw per scalar; particle_mean: shared mean of valid "
+             "particle draws (requires particle mode); none: unchanged."
     )
     p.add_argument(
         "--noise-mean",
