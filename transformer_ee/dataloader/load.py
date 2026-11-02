@@ -89,6 +89,8 @@ def get_train_valid_test_dataloader(config: dict):  # pylint: disable=R0914
             Normalized_pandas_Dataset_with_cache,
         )
 
+        if config.get("split_column"):
+            raise ValueError("split_column is only supported with dataframe_type 'polars'")
         df = pd.read_csv(config["data_path"])
         train_idx, valid_idx, test_idx = get_sample_indices(len(df), config)
         train_set = Normalized_pandas_Dataset_with_cache(
@@ -111,20 +113,39 @@ def get_train_valid_test_dataloader(config: dict):  # pylint: disable=R0914
         )
 
         df = get_polars_df_from_file(config["data_path"])
-        randomdf = df.sample(fraction=1.0, seed=config["seed"], shuffle=True)
-        del df
-        sizes = get_sample_sizes(randomdf.height, config)
-        train_set = Normalized_Polars_Dataset_with_cache(
-            config, randomdf.slice(offset=0, length=sizes[0])
-        )
+        split_column = config.get("split_column")
+        if split_column:
+            # Pre-assigned split (e.g. stratified per sample upstream).
+            # Rows keep file order, so result.csv lines up with the file's test rows.
+            import polars as pl  # pylint: disable=C0415
+
+            labels = set(df.get_column(split_column).unique().to_list())
+            if not labels <= {"train", "valid", "test"}:
+                raise ValueError(f"{split_column} has labels {labels}; expected train/valid/test")
+            train_df, valid_df, test_df = (
+                df.filter(pl.col(split_column) == name) for name in ("train", "valid", "test")
+            )
+            del df
+            print("split from column:\t", split_column)
+            print("train indicies size:\t", train_df.height)
+            print("valid indicies size:\t", valid_df.height)
+            print("test  indicies size:\t", test_df.height)
+        else:
+            randomdf = df.sample(fraction=1.0, seed=config["seed"], shuffle=True)
+            del df
+            sizes = get_sample_sizes(randomdf.height, config)
+            train_df = randomdf.slice(offset=0, length=sizes[0])
+            valid_df = randomdf.slice(offset=sizes[0], length=sizes[1])
+            test_df = randomdf.slice(offset=sizes[0] + sizes[1], length=sizes[2])
+        train_set = Normalized_Polars_Dataset_with_cache(config, train_df)
         valid_set = Normalized_Polars_Dataset_with_cache(
             config,
-            randomdf.slice(offset=sizes[0], length=sizes[1]),
+            valid_df,
             weighter=train_set.weighter,
         )
         test_set = Normalized_Polars_Dataset_with_cache(
             config,
-            randomdf.slice(offset=sizes[0] + sizes[1], length=sizes[2]),
+            test_df,
             weighter=train_set.weighter,
         )
 
