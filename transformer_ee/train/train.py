@@ -576,7 +576,7 @@ class MVtrainer:
             )
 
         # one canvas – many lines
-        plot_loss(metrics, self.save_path)
+        plot_loss(metrics, self.save_path, logy=False)
 
         if self._should_early_stop():
             self.early_stop_triggered = True
