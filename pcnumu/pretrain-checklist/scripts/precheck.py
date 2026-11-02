@@ -27,9 +27,13 @@ from pathlib import Path
 
 import numpy as np
 
-BASE = "/data/nova/chow/transformerEE"
-# train_wide.py main() merge order below was verified against this file version.
-VERIFIED_TRAIN_WIDE_SHA256 = "00b23c59e2b091477a6015ba40fe49d321217ebadb57bcfa621fd12b057f7093"
+CODE_DIR = "/data/nova/chow/transformerEE-pcnumu-loop"   # Git clone, branch pcnumu-loop
+RUNS_DIRS = ["/data/nova/chow/pcnumu-runs",              # loop run folders
+             "/data/nova/chow/transformerEE/runs"]       # frozen r01-r05 (read-only)
+OLD_CONFIG_DIR = "/data/nova/chow/transformerEE/configs"  # frozen r05 configs, for name clashes
+GIT = "/data/chow/tools/git-env/bin/git"
+# simulate() mirrors train_wide.main() of this file version (pcnumu-loop, upstream c327032).
+VERIFIED_TRAIN_WIDE_SHA256 = "564b7c8fc9295f8a8db007c5f126e64a75d93340099834d0624bb6e36b1d189e"
 ID_COLS = ["run", "subrun", "cycle", "evt", "subevt"]
 NONFINITE = {"nan", "-nan", "inf", "-inf", "+inf", "infinity", "-infinity"}
 REQUIRED = ["data_path", "save_path", "model_phys_name", "vector", "scalar", "target",
@@ -38,12 +42,12 @@ REQUIRED = ["data_path", "save_path", "model_phys_name", "vector", "scalar", "ta
             "model.kwargs.dropout", "seed", "max_num_prongs",
             "batch_size_train", "batch_size_valid", "batch_size_test", "num_workers",
             "early_stopping"]
-# (config key, CLI flag that kset() uses for it). num_layers is filled from --nhead (launcher bug).
+# (config key, CLI flag that kset() fills it from when the JSON lacks it).
 KSET_KEYS = [("data_path", "--data-path"), ("save_path", "--save-path"),
              ("dataframe_type", "--dataframe-type"), ("num_workers", "--num-workers"),
              ("model.epochs", "--epochs"), ("optimizer.name", "--optimizer"),
              ("optimizer.kwargs.lr", "--lr"), ("optimizer.kwargs.weight_decay", "--weight-decay"),
-             ("model.kwargs.nhead", "--nhead"), ("model.kwargs.num_layers", "--nhead"),
+             ("model.kwargs.nhead", "--nhead"), ("model.kwargs.num_layers", "--num-layers"),
              ("model.kwargs.dropout", "--dropout"), ("model.kwargs.dim_feedforward", "--dim-ff")]
 
 
@@ -178,20 +182,29 @@ def simulate(code_dir, argv, rep):
             src = "json"
             jv = dget(base, key)
             same = (str(cli_val).lower() == str(jv).lower()) if isinstance(jv, str) else cli_val == jv
-            if flag in explicit and not same and key != "model.kwargs.num_layers":
+            if flag in explicit and not same:
                 src = "json (CLI value IGNORED)"
         elif cli_val is None:
             src = "unset"
-        elif key == "model.kwargs.num_layers":
-            src = "BUG: filled from --nhead"
         else:
             src = "cli" if flag in explicit else "argparse DEFAULT"
         prov.append({"key": key, "flag": flag, "json": dget(base, key), "cli": cli_val, "source": src})
 
     cfg = copy.deepcopy(base)
     k = tw.kset
-    k(cfg, "data_path", args.data_path)
+    # --- same order as train_wide.main() at VERIFIED_TRAIN_WIDE_SHA256 ---
+    if "noise" not in base and args.enable_noise:
+        rep.add("WARN", "Effective config", "`--enable-noise` with no `noise` key: launcher fills GENIE default "
+                "variable names (Final_State_Particles_*), almost certainly wrong for NOvA. Put `noise` in the JSON.")
+    try:
+        tw.configure_noise(cfg, args)          # validates/merges the noise block; no-op without one
+    except ValueError as exc:
+        rep.add("FAIL", "Effective config", f"launcher rejects the noise configuration: {exc}")
     k(cfg, "save_path", args.save_path)
+    if args.auto_unique_save_path:
+        rep.add("FAIL", "Effective config", "`--auto-unique-save-path` appends a timestamped folder: the model dir "
+                "cannot be predicted and the run would not land in its run folder. Remove it.")
+    k(cfg, "data_path", args.data_path)
     k(cfg, "dataframe_type", args.dataframe_type)
     k(cfg, "num_workers", args.num_workers)
     k(cfg, "model.epochs", args.epochs)
@@ -207,11 +220,6 @@ def simulate(code_dir, argv, rep):
         ck = cfg.get("checkpointing", {})
         ck["keep_last_n_epoch_checkpoints"] = int(args.keep_last_n_epoch_checkpoints)
         cfg["checkpointing"] = ck
-    if "noise" not in cfg and args.enable_noise:
-        rep.add("WARN", "Effective config", "`--enable-noise` with no `noise` key: launcher fills GENIE default "
-                "variable names (Final_State_Particles_*), almost certainly wrong for NOvA. Put `noise` in the JSON.")
-        cfg["noise"] = {"name": args.noise_name, "mean": args.noise_mean, "std": args.noise_std,
-                        "vector": args.noise_vector or [], "scalar": args.noise_scalar or []}
     k(cfg, "optimizer.name", args.optimizer)
     k(cfg, "optimizer.kwargs.lr", args.lr)
     if cfg["optimizer"]["name"] == "sgd":
@@ -220,7 +228,7 @@ def simulate(code_dir, argv, rep):
         k(cfg, "optimizer.kwargs.weight_decay", args.weight_decay)
     mkw = tw.ensure_model_kwargs(cfg)
     k(mkw, "nhead", args.nhead)
-    k(mkw, "num_layers", args.nhead)
+    k(mkw, "num_layers", args.num_layers)
     k(mkw, "dropout", args.dropout)
     k(mkw, "dim_feedforward", args.dim_ff)
     if args.profile:
@@ -249,13 +257,12 @@ def simulate(code_dir, argv, rep):
 
 
 def check_effective(args, base, cfg, prov, mhash, argv, rep, config_dir, runs_dir):
+    """runs_dir: list of run trees scanned for name reuse."""
     S = "Effective config"
     for p in prov:
         if p["source"] == "argparse DEFAULT":
             rep.add("FAIL", S, f"`{p['key']}` absent from JSON → silently takes argparse default `{p['cli']}` "
                                f"(`{p['flag']}`). Put it in the JSON.")
-        elif p["source"].startswith("BUG"):
-            rep.add("FAIL", S, f"`model.kwargs.num_layers` absent from JSON → launcher bug fills it with nhead={p['cli']}.")
         elif "IGNORED" in p["source"]:
             rep.add("FAIL", S, f"`{p['flag']} {p['cli']}` on the command line is IGNORED; JSON `{p['key']}` = "
                                f"`{p['json']}` wins. Make the sbatch and JSON agree.")
@@ -307,7 +314,10 @@ def check_effective(args, base, cfg, prov, mhash, argv, rep, config_dir, runs_di
         rep.add("PASS", S, "save_path is new.")
     # name collisions with other configs / existing runs
     clashes = []
-    for f in glob.glob(os.path.join(config_dir, "**", "*.json"), recursive=True):
+    others = glob.glob(os.path.join(config_dir, "**", "*.json"), recursive=True)
+    for d in runs_dir:  # loop run folders keep their resolved config as effective_config.json
+        others += glob.glob(os.path.join(d, "**", "effective_config.json"), recursive=True)
+    for f in others:
         if os.path.abspath(f) == os.path.abspath(args.base_config):
             continue
         try:
@@ -318,16 +328,17 @@ def check_effective(args, base, cfg, prov, mhash, argv, rep, config_dir, runs_di
             continue
         for key in ("save_path", "model_phys_name"):
             if o.get(key) and o.get(key) == cfg.get(key):
-                clashes.append(f"`{key}` also in {os.path.relpath(f, config_dir)}")
-    for f in glob.glob(os.path.join(runs_dir, "**", "input.json"), recursive=True):
-        if os.path.dirname(os.path.abspath(f)).endswith("model_" + mhash):
-            continue  # this exact config's own dir (reported above)
-        try:
-            o = json.load(open(f))
-        except Exception:
-            continue
-        if o.get("model_phys_name") == cfg.get("model_phys_name"):
-            clashes.append(f"`model_phys_name` used by existing run {os.path.relpath(f, runs_dir)}")
+                clashes.append(f"`{key}` also in {f}")
+    for d in runs_dir:
+        for f in glob.glob(os.path.join(d, "**", "input.json"), recursive=True):
+            if os.path.dirname(os.path.abspath(f)).endswith("model_" + mhash):
+                continue  # this exact config's own dir (reported above)
+            try:
+                o = json.load(open(f))
+            except Exception:
+                continue
+            if o.get("model_phys_name") == cfg.get("model_phys_name"):
+                clashes.append(f"`model_phys_name` used by existing run {f}")
     for c in clashes:
         rep.add("FAIL", S, "name reuse: " + c)
     if not clashes:
@@ -676,21 +687,27 @@ def check_resources(directives, env, cfg, rep, config_path_arg, base_config):
 
 def check_code(code_dir, rep):
     S = "Code state"
+    import subprocess  # pylint: disable=C0415
     tw = os.path.join(code_dir, "train_wide.py")
     sha = hashlib.sha256(open(tw, "rb").read()).hexdigest()
-    head = open(os.path.join(code_dir, ".git", "HEAD")).read().strip()
-    commit = head
-    if head.startswith("ref:"):
-        ref = head.split()[1]
-        p = os.path.join(code_dir, ".git", ref)
-        if os.path.exists(p):
-            commit = open(p).read().strip()
+    git = GIT if os.path.exists(GIT) else "git"
+
+    def run(*cmd):
+        return subprocess.run([git, "-C", code_dir, *cmd], capture_output=True, text=True, check=True).stdout.rstrip()
+    try:
+        branch, commit = run("rev-parse", "--abbrev-ref", "HEAD"), run("rev-parse", "HEAD")
+        dirty = run("status", "--porcelain", "--untracked-files=no")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        branch = commit = dirty = None
+        rep.add("WARN", S, f"cannot read Git state of {code_dir}: {exc}")
+    rep.facts["code"] = {"branch": branch, "commit": commit, "dirty": bool(dirty), "train_wide_sha256": sha}
+    if commit:
+        rep.add("INFO", S, f"{branch} @ {commit[:12]}")
+        if dirty:
+            rep.add("FAIL", S, "tracked files have uncommitted changes; the loop refuses to train from a dirty "
+                               "checkout:\n" + dirty)
         else:
-            for line in open(os.path.join(code_dir, ".git", "packed-refs")):
-                if line.strip().endswith(ref):
-                    commit = line.split()[0]
-    rep.facts["code"] = {"head": head, "commit": commit, "train_wide_sha256": sha}
-    rep.add("INFO", S, f"{head} @ {commit[:12]}; working-tree changes vs HEAD cannot be checked (no git on host).")
+            rep.add("PASS", S, "checkout clean (tracked files).")
     if sha != VERIFIED_TRAIN_WIDE_SHA256:
         rep.add("WARN", S, "train_wide.py differs from the version this precheck's merge logic was verified against "
                            "→ re-verify `simulate()` before trusting the effective-config section.")
@@ -724,7 +741,7 @@ def main():
     p.add_argument("--sbatch", required=True)
     p.add_argument("--config", help="JSON you intend to use; checked against the sbatch --base-config")
     p.add_argument("--reference", help="reference config or a run's model_*/input.json to diff against")
-    p.add_argument("--code-dir", default=os.path.join(BASE, "code"))
+    p.add_argument("--code-dir", default=CODE_DIR)
     p.add_argument("--max-rows", type=int, default=None, help="scan only the first N rows (quick look)")
     p.add_argument("--overlap-with", action="append", default=[], help="other CSV(.xz) to check event overlap")
     p.add_argument("--tmpdir", default=os.environ.get("TMPDIR", "/tmp"))
@@ -742,8 +759,7 @@ def main():
     rep.add("INFO", "Launch command", f"`{script} {' '.join(argv)}`")
     check_code(a.code_dir, rep)
     args, base, cfg, prov, mhash = simulate(a.code_dir, argv, rep)
-    check_effective(args, base, cfg, prov, mhash, argv, rep,
-                    os.path.join(a.code_dir, "transformer_ee", "config"), os.path.join(BASE, "runs"))
+    check_effective(args, base, cfg, prov, mhash, argv, rep, OLD_CONFIG_DIR, RUNS_DIRS)
     if not a.skip_data:
         scan_data(cfg, rep, a.tmpdir, a.max_rows, a.overlap_with)
     check_resources(directives, env, cfg, rep, a.config, args.base_config)
