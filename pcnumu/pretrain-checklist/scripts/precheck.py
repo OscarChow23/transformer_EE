@@ -308,6 +308,8 @@ def check_effective(args, base, cfg, prov, mhash, argv, rep, config_dir, runs_di
     sp = cfg["save_path"]
     if os.path.isdir(model_dir):
         rep.add("FAIL", S, "predicted model dir ALREADY EXISTS → no resume logic; input.json kept, checkpoints overwritten.")
+    elif os.path.isdir(sp) and set(os.listdir(sp)) <= {"effective_config.json", "train.sbatch"}:
+        rep.add("PASS", S, "save_path is a prepared loop run folder with nothing run in it yet.")
     elif os.path.isdir(sp):
         rep.add("WARN", S, f"save_path exists (train.log is appended): `{sp}` contains {sorted(os.listdir(sp))[:8]}")
     else:
