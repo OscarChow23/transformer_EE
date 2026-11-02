@@ -1,0 +1,25 @@
+{
+  "_about": "Frozen ellipse for the scorecard's ellipse fraction (issue #4). The scorecard looks up its test set by fingerprint; a test set not listed here gets the provisional fallback axes and is flagged provisional. Changing a frozen entry means a deliberate new test-set definition: add a new entry, do not edit an old one.",
+  "provisional_fallback": {"a_percent": 22.0, "b_percent": 22.0},
+  "frozen": {
+    "training_v3": {
+      "a_percent": 22.0,
+      "b_percent": 22.0,
+      "theta_rad": 0.0,
+      "definition": "unbinned",
+      "plane": "(100 r_trueE, 100 r_trueLepE), test set, true trueE in [0.5, 6] GeV, inside if (x/a)^2 + (y/b)^2 <= 1",
+      "test_sets": {
+        "fhc": "20be926adaf557259fb74d05552e3337fc94c04fd2e813b6f29850afc9b43118",
+        "rhc": "b2ac81891a1dd2dca385c628db648fd82c689839656abd7a022abab9523d8d85"
+      },
+      "calibration": {
+        "decided": "2026-11-02, Oscar: axis-aligned circle, 22%, unbinned headline",
+        "target": "baseline r05 sample 3 at about 60-70% inside",
+        "r05_sample3_unbinned": {"fhc": 0.6642221600737496, "rhc": 0.645167816918823},
+        "r05_sample3_binned_eval_model_C": {"fhc": 0.6658535568342924, "rhc": 0.6508794444025062},
+        "scan": "/data/nova/chow/pcnumu-runs/r05_v3data-allsamples_v3features/ellipse_calibration_training_v3/scan.csv",
+        "scan_code": "pcnumu/eval/calibrate_ellipse.py @ 8b04ba2"
+      }
+    }
+  }
+}

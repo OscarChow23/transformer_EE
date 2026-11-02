@@ -9,7 +9,7 @@ import tempfile
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scorecard import _root_axis, _root_findbin, ellipse_fraction, errmap_bins, parse_losses  # noqa: E402
+from scorecard import _root_axis, _root_findbin, ellipse_axes, ellipse_fraction, errmap_bins, parse_losses  # noqa: E402
 
 
 def test_findbin_matches_taxis_edges():
@@ -58,6 +58,14 @@ def test_parse_losses_uses_last_session():
 def test_errmap_drops_xmax_like_fixed_range_view():
     b, y = errmap_bins(np.array([-0.1, 0.0, 0.05, 5.99, 6.0, 7.0]), np.arange(6.0))
     assert b.tolist() == [0, 0, 59] and y.tolist() == [1.0, 2.0, 3.0]
+
+
+def test_ellipse_axes_frozen_only_for_listed_test_sets():
+    fhc = "20be926adaf557259fb74d05552e3337fc94c04fd2e813b6f29850afc9b43118"
+    got = ellipse_axes(fhc)
+    assert (got["a_percent"], got["b_percent"], got["provisional"], got["frozen_as"]) == (22.0, 22.0, False, "training_v3/fhc")
+    other = ellipse_axes("0" * 64)
+    assert other["provisional"] is True and other["frozen_as"] is None
 
 
 if __name__ == "__main__":

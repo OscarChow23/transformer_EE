@@ -41,12 +41,12 @@ from matplotlib.colors import LogNorm  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from eval_by_sample import SAMPLES, STYLE, WINDOW, find_model_dir, stats, style_axes  # noqa: E402
 
-SCHEMA = "pcnumu-scorecard/1"
+SCHEMA = "pcnumu-scorecard/2"  # 2: frozen ellipse, unbinned headline fraction
 BANDS = (0.05, 0.10, 0.15)
 ID_COLUMNS = ["run", "subrun", "cycle", "evt", "subevt"]
-# Ellipse in the (trueE error %, trueLepE error %) plane, centred at (0, 0). PROVISIONAL:
-# issue #4 calibrates the semi-axes once on r05 sample 3 and freezes them for training_v3.
-ELLIPSE = dict(a=10.0, b=10.0, provisional=True)
+# Ellipse in the (trueE error %, trueLepE error %) plane, centred at (0, 0). The axes are
+# frozen per test set in ellipse_frozen.json (issue #4); other test sets are flagged provisional.
+ELLIPSE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ellipse_frozen.json")
 ERRMAP = dict(bins=60, xmin=0.0, xmax=6.0)  # eval_model.C graph_resolution_stat "view_0to6_"
 GIT = "/data/chow/tools/git-env/bin/git"
 AXIS_LABEL = {"trueE": "true neutrino energy (trueE)", "trueLepE": "true muon energy (trueLepE)"}
@@ -162,6 +162,19 @@ def ellipse_fraction(x, y, a, b, nbins=200):
                 unbinned_fraction=float(np.mean(x * x / (a * a) + y * y / (b * b) <= 1.0)) if x.size else None)
 
 
+def ellipse_axes(fingerprint):
+    """Frozen axes for this test set, or the provisional fallback if it is not listed."""
+    spec = json.load(open(ELLIPSE_FILE))
+    for name, e in spec["frozen"].items():
+        for horn, fp in e["test_sets"].items():
+            if fp == fingerprint:
+                return dict(a_percent=e["a_percent"], b_percent=e["b_percent"], provisional=False,
+                            frozen_as=f"{name}/{horn}", definition=e["definition"])
+    fb = spec["provisional_fallback"]
+    return dict(a_percent=fb["a_percent"], b_percent=fb["b_percent"], provisional=True,
+                frozen_as=None, definition="unbinned")
+
+
 # ---------- scorecard ----------
 def build_scorecard(cfg, model_dir, run_dir, smp, true, pred, fingerprint, losses, n_sessions):
     targets = cfg["target"]
@@ -178,11 +191,16 @@ def build_scorecard(cfg, model_dir, run_dir, smp, true, pred, fingerprint, losse
             metrics[t][k] = dict(n=s["n"], n_outside_window=int(np.sum(masks[k] & ~in_win)),
                                  bias=float(s["bias"]), resolution=float(s["res"]),
                                  band_05=s["f5"], band_10=s["f10"], band_15=s["f15"])
+    axes = ellipse_axes(fingerprint)
     ellipse = {}
     if len(targets) >= 2:
         for k, _ in SAMPLES:
             m = masks[k] & in_win
-            ellipse[k] = ellipse_fraction(100 * r[targets[0]][m], 100 * r[targets[1]][m], ELLIPSE["a"], ELLIPSE["b"])
+            e = ellipse_fraction(100 * r[targets[0]][m], 100 * r[targets[1]][m], axes["a_percent"], axes["b_percent"])
+            # Headline = unbinned (exact per event); binned = eval_model.C port, kept as a cross-check.
+            ellipse[k] = dict(fraction=e["unbinned_fraction"], binned_fraction=e["fraction"],
+                              binned_n_out_of_range=e["n_out_of_range"],
+                              binned_x_range=e["x_range"], binned_y_range=e["y_range"])
 
     meta = json.load(open(os.path.join(model_dir, "checkpoint_metadata.json")))
     best = meta["best_model"]
@@ -202,13 +220,13 @@ def build_scorecard(cfg, model_dir, run_dir, smp, true, pred, fingerprint, losse
             relative_error="r = (pred - true) / true", bias="median(r)", resolution="(q84 - q16) / 2 of r",
             tolerance_bands=[f"|r| < {b:g}" for b in BANDS],
             window=f"true {t0} in [{WINDOW[0]}, {WINDOW[1]}] GeV, applied to every target",
-            ellipse=("fractionInsideEllipse port (graph_eval/eval_model.C): 200x200 bins of "
-                     f"(100 r_{targets[0]}, 100 r_{targets[1] if len(targets) > 1 else '-'}), "
-                     "bin centres tested, denominator = in-range entries"),
+            ellipse=(f"fraction = share of window events with (x/a)^2 + (y/b)^2 <= 1, x = 100 r_{targets[0]}, "
+                     f"y = 100 r_{targets[1] if len(targets) > 1 else '-'} (unbinned); binned_fraction = "
+                     "fractionInsideEllipse port (graph_eval/eval_model.C), 200x200 bins, bin centres, "
+                     "in-range denominator"),
             source="pcnumu/eval/eval_by_sample.py stats()"),
         "metrics": metrics,
-        "ellipse": dict(a_percent=ELLIPSE["a"], b_percent=ELLIPSE["b"], provisional=ELLIPSE["provisional"],
-                        by_sample=ellipse),
+        "ellipse": dict(axes, by_sample=ellipse),
         "training": dict(best_epoch=best["epoch"], best_validation_loss=best["validation_loss"],
                          epoch_numbering="zero-based, as in train.log and checkpoint_metadata.json",
                          epochs_run=len(losses), log_sessions=n_sessions,
@@ -237,13 +255,14 @@ def render_md(sc, targets):
         L.append("")
     e = sc["ellipse"]
     if e["by_sample"]:
-        L += [f"## Ellipse fraction (a = {e['a_percent']:g}%, b = {e['b_percent']:g}%"
-              f"{', PROVISIONAL axes' if e['provisional'] else ''})", "",
-              "| sample | fraction (binned, as eval_model.C) | unbinned cross-check | out of histogram range |",
-              "|---|---|---|---|"]
+        state = (f"frozen as {e['frozen_as']}" if not e["provisional"]
+                 else "PROVISIONAL: test set not in ellipse_frozen.json")
+        L += [f"## Ellipse fraction (a = {e['a_percent']:g}%, b = {e['b_percent']:g}%, {state})", "",
+              "| sample | fraction (unbinned) | binned cross-check (eval_model.C) |",
+              "|---|---|---|"]
         for k, _ in SAMPLES:
             x = e["by_sample"][k]
-            L.append(f"| {k} | {x['fraction']:.1%} | {x['unbinned_fraction']:.1%} | {x['n_out_of_range']} |")
+            L.append(f"| {k} | {x['fraction']:.1%} | {x['binned_fraction']:.1%} |")
         L.append("")
     tr = sc["training"]
     L += ["## Training", "", f"best validation loss {tr['best_validation_loss']:.6f} at epoch {tr['best_epoch']} "
