@@ -11,6 +11,14 @@ files are separate commits (`load.py`, `train.py`).
 | `prep/` | `make_split_csv.py` (derived CSV with a hashed per-event `split` column), its sbatch, `merge_csv.sh` |
 | `pretrain-checklist/` | the Claude Code skill (`SKILL.md`, `scripts/precheck.py`, `references/questions.md`) and the sbatch gate (`scripts/gate_hook.py`, `settings-hook.json`) |
 
+## Where run outputs live
+
+Outside Git, in `/data/nova/chow/pcnumu-runs/` (layout in its `README.md`): one folder per
+trial, `rNN_<short-description>/`, with `fhc/` and `rhc/` run folders that are the configs'
+`save_path`. `train.py` writes `model_<hash>/` (checkpoints, `loss.png`, `result.csv`) inside
+the run folder; `eval/scorecard.py` writes `scorecard/` next to it by default.
+r01–r05 outputs stay in the frozen `/data/nova/chow/transformerEE/runs/`.
+
 ## Imported unchanged from the old working tree
 
 These files were copied byte for byte from `/data/nova/chow/transformerEE`
