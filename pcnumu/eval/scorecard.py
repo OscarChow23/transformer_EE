@@ -15,6 +15,7 @@ Writes into OUT_DIR (default RUN_DIR/scorecard; refuses an existing directory):
   loss_history.csv
   errmap_<target>_sample<k>.png   error map, eval_model.C view_0to6 family, ±5/±10% bands
   errmap_stats.csv    per-bin counts and 16/50/84th percentiles behind the error maps
+  ellipse_sample<k>.png           joint trueE/trueLepE error plane with the ellipse drawn
 
 Metric definitions are those of eval_by_sample.py (imported, not copied):
 r = (pred - true) / true; bias = median(r); resolution = (q84 - q16) / 2; tolerance-band
@@ -309,18 +310,17 @@ def plot_errmaps(smp, true, pred, targets, out):
                 im = ax.pcolormesh(xe, ye, np.ma.masked_where(h.T == 0, h.T), cmap="viridis",
                                    norm=LogNorm(vmin=1, vmax=max(h.max(), 1)), shading="flat")
                 fig.colorbar(im, ax=ax, label="events")
-            for frac, alpha in ((0.10, 0.10), (0.05, 0.16)):
-                ax.axhspan(-frac, frac, color="#e66101", alpha=alpha, lw=0)
-                for s in (-1, 1):
-                    ax.axhline(s * frac, color="#e66101", lw=0.8, ls=":")
+            # Bands are nested: the ±5% span sits on top of the ±10% one, so it reads darker.
+            ax.axhspan(-0.10, 0.10, color="#e66101", alpha=0.12, lw=0, label="±10% tolerance band")
+            ax.axhspan(-0.05, 0.05, color="#e66101", alpha=0.22, lw=0, label="±5% tolerance band")
             ax.plot(centers, q[:, 1], color="black", lw=2, label="median")
-            ax.plot(centers, q[:, 0], color="#c0392b", lw=2, ls="--", label="16th–84th percentile")
+            ax.plot(centers, q[:, 0], color="#c0392b", lw=2, ls="--",
+                    label="middle 68% of events\n(16th–84th percentile)")
             ax.plot(centers, q[:, 2], color="#c0392b", lw=2, ls="--")
             ax.axhline(0, color="black", lw=0.8)
             ax.set(xlim=(lo, hi), ylim=(-1, 1), xlabel=f"{AXIS_LABEL.get(t, 'true ' + t)} [GeV]",
-                   ylabel=f"(reco − true) / true, {t}", title=f"{label}: {t} error map")
-            ax.text(0.99, 0.02, "shaded: ±5% (dark) and ±10% tolerance bands; every non-empty bin drawn, "
-                    "as eval_model.C", transform=ax.transAxes, ha="right", fontsize=7, color="#6b6b6b")
+                   ylabel=f"{t} error  (reco − true) / true")
+            ax.set_title(f"{label}, test set", fontsize=11)
             ax.legend(loc="upper right", fontsize=8, frameon=True, framealpha=0.9, edgecolor="none")
             fig.tight_layout()
             fig.savefig(os.path.join(out, f"errmap_{t}_sample{k}.png"), dpi=150)
@@ -329,6 +329,44 @@ def plot_errmaps(smp, true, pred, targets, out):
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
+
+
+def plot_ellipses(smp, true, pred, targets, ellipse, out, view=60.0):
+    """Joint error plane (trueE error %, trueLepE error %) per sample with the ellipse drawn.
+
+    Display binning is 1% over ±view; the fraction quoted is the scorecard's value.
+    """
+    from matplotlib.patches import Ellipse  # pylint: disable=C0415
+
+    if len(targets) < 2 or not ellipse["by_sample"]:
+        return
+    t0, t1 = targets[0], targets[1]
+    in_win = (true[t0] >= WINDOW[0]) & (true[t0] <= WINDOW[1])
+    x_all = 100 * (pred[t0] - true[t0]) / true[t0]
+    y_all = 100 * (pred[t1] - true[t1]) / true[t1]
+    edges = np.arange(-view, view + 1e-9, 1.0)
+    a, b = ellipse["a_percent"], ellipse["b_percent"]
+    for k, label in SAMPLES:
+        m = ((smp == k) if k != "all" else np.ones(smp.size, bool)) & in_win
+        h, _, _ = np.histogram2d(x_all[m], y_all[m], bins=(edges, edges))
+        fig, ax = plt.subplots(figsize=(7.2, 6.2))
+        if h.sum():
+            im = ax.pcolormesh(edges, edges, np.ma.masked_where(h.T == 0, h.T), cmap="viridis",
+                               norm=LogNorm(vmin=1, vmax=max(h.max(), 1)), shading="flat")
+            fig.colorbar(im, ax=ax, label="events / (1% × 1%)", shrink=0.85)
+        frac = ellipse["by_sample"][k]["fraction"]
+        ax.add_patch(Ellipse((0, 0), 2 * a, 2 * b, fill=False, color="#e66101", lw=2.5,
+                             label=f"ellipse ±{a:g}% × ±{b:g}%{' (provisional)' if ellipse['provisional'] else ''}"
+                                   f"\n{frac:.1%} of events inside"))
+        ax.axhline(0, color="white", lw=0.6, alpha=0.6)
+        ax.axvline(0, color="white", lw=0.6, alpha=0.6)
+        ax.set(xlim=(-view, view), ylim=(-view, view), aspect="equal",
+               xlabel=f"{t0} error  (reco − true) / true  [%]", ylabel=f"{t1} error  (reco − true) / true  [%]")
+        ax.set_title(f"{label}, test set, true {t0} {WINDOW[0]:g}–{WINDOW[1]:g} GeV", fontsize=11)
+        ax.legend(loc="upper right", fontsize=8, frameon=True, framealpha=0.9, edgecolor="none")
+        fig.tight_layout()
+        fig.savefig(os.path.join(out, f"ellipse_sample{k}.png"), dpi=150)
+        plt.close(fig)
 
 
 def main():
@@ -369,6 +407,7 @@ def main():
     best = json.load(open(os.path.join(model_dir, "checkpoint_metadata.json")))["best_model"]
     plot_losses(losses, best["epoch"], best["validation_loss"], out)
     plot_errmaps(smp, true, pred, cfg["target"], out)
+    plot_ellipses(smp, true, pred, cfg["target"], sc["ellipse"], out)
     print(f"wrote {out} (scorecard sha256 {digest})")
     print(render_md(sc, cfg["target"]))
 
