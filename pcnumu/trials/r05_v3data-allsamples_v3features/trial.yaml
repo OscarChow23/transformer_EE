@@ -1,0 +1,16 @@
+# Root trial: r05 trained before the loop existed (29 Oct 2026, old working tree at c410d71 +
+# split-column loader). Its effective configs are imported verbatim from the saved input.json of
+# each run and pinned by sha256; resolving this spec returns them unchanged.
+trial: r05_v3data-allsamples_v3features
+status: done
+hypothesis: >-
+  Training on all three PC samples of training_v3 with the v3 features (r03's 35+6 plus sample
+  flags and 15 new prong inputs), r03 weights and dropout 0.3 improves sample-3 resolution.
+horns: [fhc, rhc]
+imported:
+  fhc:
+    path: /data/nova/chow/transformerEE/runs/pc-numu/fhc/pcnumu_fhc_r05_v3data-allsamples_v3features_20261029/model_6db92fccf53484d786f0c76dbc5a2ed9/input.json
+    sha256: 37b339565e3c960ae3eef12e8370fde6dcbb4f1255d5069f91eb4858a6a904fd
+  rhc:
+    path: /data/nova/chow/transformerEE/runs/pc-numu/rhc/pcnumu_rhc_r05_v3data-allsamples_v3features_20261029/model_6d64aa3fca02cf0641e52337a4d80ca9/input.json
+    sha256: 0c6d488b81406e3ce06b846dc85a84718f30147ab35579cc42397367bc955b83

@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash) gate for TransformerEE training launches.
+"""PreToolUse(Bash) gate for TransformerEE training launches by Claude.
 
-Blocks `sbatch X.sbatch` when X runs train_wide.py, unless a pretrain-checklist record in
-CHECKLIST_DIR names that sbatch with its current sha256, its config with the config's
-current sha256, and contains a GO line. Blocks direct `srun`/`python train_wide.py`.
-Everything else passes untouched. Fails open (allows) only on its own internal errors,
-and says so in a systemMessage.
+Oscar submits training himself (`python pcnumu/loop/loop.py submit <trial>` in his own terminal,
+which this hook never sees). So for a Claude session this hook denies:
+  - `loop.py submit` and `loop.py job-start` (job-start belongs to the Slurm job; running it by
+    hand writes provenance.json and blocks the real job);
+  - `sbatch`/`srun` of any script that runs train_wide.py;
+  - direct `python ... train_wide.py` (except inside a precheck command).
+Everything else passes untouched, including sbatch of non-training scripts. Fails open (allows)
+only on its own internal errors, and says so in a systemMessage.
 """
-import glob
-import hashlib
 import json
 import os
 import re
 import shlex
 import sys
 
-CHECKLIST_DIR = os.environ.get("PRETRAIN_CHECKLIST_DIR", "/data/nova/chow/transformerEE/job_scripts/checklists")
 TRAIN_RE = re.compile(r"\bpython[0-9.]*\s+\S*train_wide\.py\b")
-
-
-def sha(path):
-    with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+LOOP_RE = re.compile(r"\bloop\.py\s+(submit|job-start)\b")
+VALUE_OPTS = {"-p", "-J", "-o", "-e", "-t", "-c", "-D", "-d", "--partition", "--job-name", "--output", "--error",
+              "--time", "--dependency", "--chdir", "--mem", "--gres"}
 
 
 def deny(reason):
@@ -31,8 +29,8 @@ def deny(reason):
     sys.exit(0)
 
 
-def sbatch_scripts(cmd, cwd):
-    """Paths of batch scripts passed to sbatch anywhere in the command line."""
+def batch_scripts(cmd, cwd):
+    """Paths of scripts passed to sbatch or srun anywhere in the command line."""
     out = []
     for seg in re.split(r"&&|\|\||;|\|", cmd):
         try:
@@ -40,14 +38,11 @@ def sbatch_scripts(cmd, cwd):
         except ValueError:
             toks = seg.split()
         for i, t in enumerate(toks):
-            if os.path.basename(t) != "sbatch":
+            if os.path.basename(t) not in ("sbatch", "srun"):
                 continue
             j = i + 1
             while j < len(toks) and toks[j].startswith("-"):
-                # options with a separate value (e.g. -p normalrun); --opt=val needs no skip
-                if "=" not in toks[j] and toks[j] in ("-p", "-J", "-o", "-e", "-t", "-c", "-D", "--partition",
-                                                     "--job-name", "--output", "--error", "--time",
-                                                     "--dependency", "-d", "--chdir", "--mem", "--gres"):
+                if "=" not in toks[j] and toks[j] in VALUE_OPTS:
                     j += 1
                 j += 1
             if j < len(toks):
@@ -55,46 +50,24 @@ def sbatch_scripts(cmd, cwd):
     return out
 
 
-def check_record(script):
-    s_sha = sha(script)
-    for rec in sorted(glob.glob(os.path.join(CHECKLIST_DIR, "*.md")), reverse=True):
-        if rec.endswith(".precheck.md"):
-            continue
-        text = open(rec).read()
-        m = re.search(r"^sbatch:\s*(\S+)\s+sha256\s+([0-9a-f]{64})", text, re.M)
-        if not m or os.path.abspath(m.group(1)) != script:
-            continue
-        if m.group(2) != s_sha:
-            return f"record {os.path.basename(rec)} signed a different version of {script} (edited after sign-off)."
-        c = re.search(r"^config:\s*(\S+)\s+sha256\s+([0-9a-f]{64})", text, re.M)
-        if not c:
-            return f"record {os.path.basename(rec)} has no `config: <path>  sha256 <hex>` line."
-        if not os.path.exists(c.group(1)) or sha(c.group(1)) != c.group(2):
-            return f"config {c.group(1)} changed (or is missing) since record {os.path.basename(rec)} was signed."
-        if not re.search(r"^GO given by Oscar", text, re.M):
-            return f"record {os.path.basename(rec)} has no GO line yet."
-        return None
-    return f"no pretrain-checklist record in {CHECKLIST_DIR} for {script}."
-
-
 def main():
     try:
         data = json.load(sys.stdin)
         cmd = data.get("tool_input", {}).get("command", "") or ""
         cwd = data.get("cwd") or os.getcwd()
-        if not re.search(r"\b(sbatch|srun)\b|train_wide\.py", cmd):
+        if not re.search(r"\b(sbatch|srun)\b|train_wide\.py|loop\.py", cmd):
             return
+        m = LOOP_RE.search(cmd)
+        if m:
+            deny(f"`loop.py {m.group(1)}` is not for Claude: Oscar submits trials himself, and job-start runs "
+                 "inside the Slurm job. Give Oscar the command instead.")
         if TRAIN_RE.search(cmd) and "precheck.py" not in cmd:
-            deny("Direct train_wide.py launches bypass the pre-training checklist. Launch through an sbatch "
-                 "script that has a signed pretrain-checklist record (use the pretrain-checklist skill).")
-        for script in sbatch_scripts(cmd, cwd):
-            if not os.path.isfile(script):
-                continue
-            if not TRAIN_RE.search(re.sub(r"\\\s*\n", " ", open(script).read())):
-                continue  # not a training job (e.g. preprocessing): allowed
-            problem = check_record(script)
-            if problem:
-                deny(f"Pre-training gate: {problem} Run the pretrain-checklist skill and get Oscar's GO first.")
+            deny("Direct train_wide.py launches are not allowed. Trials run through "
+                 "`loop.py prepare` + the pretrain-checklist GO + Oscar's `loop.py submit`.")
+        for script in batch_scripts(cmd, cwd):
+            if os.path.isfile(script) and TRAIN_RE.search(re.sub(r"\\\s*\n", " ", open(script).read())):
+                deny(f"{script} runs train_wide.py. Oscar submits training himself "
+                     "(`python pcnumu/loop/loop.py submit <trial>`); nothing submits on his behalf.")
     except SystemExit:
         raise
     except Exception as e:  # never wedge the shell on a hook bug, but make it visible

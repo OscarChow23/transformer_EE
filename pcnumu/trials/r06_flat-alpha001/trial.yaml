@@ -1,0 +1,13 @@
+# DRAFT: proposed on 30 Oct (Friday handoff), not yet agreed with Linda or signed.
+trial: r06_flat-alpha001
+status: draft
+baseline: r05_v3data-allsamples_v3features
+hypothesis: >-
+  Stronger flattening (alpha 0.05 -> 0.01) makes the pooled trueE weighting flatter for sample 3
+  (peak/4-5 GeV ratio about 1.4 instead of 2.7) and improves sample-3 resolution above 3 GeV.
+horns: [fhc, rhc]
+overrides:
+  weight.kwargs.alpha: 0.01   # r05: 0.05
+resources:
+  mem: 80G          # r05 MaxRSS about 48-52 GB
+  time: "08:00:00"  # r05: FHC 3h21, RHC 2h39
