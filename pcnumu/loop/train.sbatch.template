@@ -30,6 +30,11 @@ export PYTHONPATH="$CODE_DIR"
 # commit, and every signed file is unchanged.
 python -I pcnumu/loop/loop.py job-start "$TRIAL" "$HORN"
 
+# trueE spectrum of the training rows before and after this run's flattening weights, per sample
+# (eval_by_sample.py --flattening-only; needs no model). A plotting failure does not stop training.
+python -I pcnumu/eval/eval_by_sample.py --config "$RUN_DIR/effective_config.json" --code-dir "$CODE_DIR" \
+  --flattening-only "$RUN_DIR/flattening" || echo "WARNING: flattening plot failed; training continues"
+
 hostname
 nvidia-smi
 python -c 'import torch; assert torch.cuda.is_available(), "CUDA GPU not visible"; print("GPU:", torch.cuda.get_device_name(0))'

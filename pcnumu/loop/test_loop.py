@@ -111,6 +111,7 @@ def test_go_record_and_job_start():
         assert loop.prepare(R06)[1] == "unchanged"
         sbatch = open(os.path.join(loop.RUNS_ROOT, R06, "fhc", "train.sbatch")).read()
         assert "loop.py job-start" in sbatch and "effective_config.json" in sbatch and "{" + "mem}" not in sbatch
+        assert sbatch.index("job-start") < sbatch.index("--flattening-only") < sbatch.index("train_wide.py")
 
         assert any("no GO record" in p for p in loop.check_go(R06, sb.repo))
         sb.sign(R06, go=False)

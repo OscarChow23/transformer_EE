@@ -1,0 +1,21 @@
+# Smoke test of r06 through the loop: the generated sbatch, job-start provenance, the flattening
+# plot and train_wide.py inside a real Slurm job, on the 2% smoke files, 2 epochs. Not a physics
+# result (different, smaller test set); it only has to run cleanly before the full r06 is signed.
+trial: r06_flat-alpha001-smoke
+status: planned
+baseline: r06_flat-alpha001
+hypothesis: >-
+  The loop's generated r06 jobs run end to end in Slurm (provenance, flattening plot, training,
+  checkpoints) on the smoke files before the full r06 uses the GPU for about 6 hours.
+horns: [fhc, rhc]
+overrides:
+  model.epochs: 2
+horn_overrides:
+  fhc:
+    data_path: /data/nova/chow/transformerEE/datasets/mprod6_1/training_v3/derived/dataset_transformer_ee_fd_fhc_nonswap_training_v3_split_v3features_smoke.csv
+  rhc:
+    data_path: /data/nova/chow/transformerEE/datasets/mprod6_1/training_v3/derived/dataset_transformer_ee_fd_rhc_nonswap_training_v3_split_v3features_smoke.csv
+resources:
+  partition: test   # 2 h limit
+  time: "01:00:00"
+  mem: 32G          # smoke files are about 120 MB
