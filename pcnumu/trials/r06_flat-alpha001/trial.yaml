@@ -3,8 +3,11 @@ trial: r06_flat-alpha001
 status: planned
 baseline: r05_v3data-allsamples_v3features
 hypothesis: >-
-  Stronger flattening (alpha 0.05 -> 0.01) makes the pooled trueE weighting flatter for sample 3
-  (peak/4-5 GeV ratio about 1.4 instead of 2.7) and improves sample-3 resolution above 3 GeV.
+  Stronger pooled flattening (alpha 0.05 -> 0.01) makes the pooled training trueE spectrum flatter
+  (peak/4-5 GeV FHC 2.74 -> 1.38, RHC 1.88 -> 1.20), at the cost of ESS 39% -> 19% and 30% of the
+  FHC weight above 10 GeV. Prediction: sample 3 shows less pull towards the ~2 GeV peak (flatter
+  bias vs true energy over 0.5-6 GeV) and better resolution above 3 GeV than r05; sample 1 keeps
+  part of its peak. To be compared with r05 and r07 on the frozen scorecard.
 horns: [fhc, rhc]
 overrides:
   weight.kwargs.alpha: 0.01   # r05: 0.05 (500 bins, pooled trueE histogram of the training rows)
