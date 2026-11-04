@@ -1,6 +1,6 @@
 # Friday 30 Oct proposal (handoff decision 1): r05 with stronger flattening, everything else unchanged.
 trial: r06_flat-alpha001
-status: planned
+status: done   # trained 3-4 Nov 2026 (jobs 115, 116); scorecards 4 Nov
 baseline: r05_v3data-allsamples_v3features
 hypothesis: >-
   Stronger pooled flattening (alpha 0.05 -> 0.01) makes the pooled training trueE spectrum flatter
