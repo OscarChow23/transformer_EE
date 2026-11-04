@@ -1,0 +1,28 @@
+# DRAFT 4 Nov 2026, not signed. r06 (pooled alpha 0.01) with half of sample 1's train+valid events removed;
+# pooled weights recomputed on the kept rows (decision 2, option a). Baseline r06 by Oscar's choice (4 Nov):
+# alpha stays 0.01 so r07 vs r06 tests only the S1 cut. Plan: pcnumu-runs/plans/r07-s1-subsample-handoff.md;
+# previews: pcnumu-runs/r07_s1-subsample/{preview,flattening_scan}/; decisions: second-brain
+# findings/2026-11-04-r07-s1-subsample-preview. Needs the loader `subsample` support (not written yet).
+trial: r07_s1-subsample
+status: planned
+baseline: r06_flat-alpha001
+hypothesis: >-
+  On top of r06 (pooled FlatSpectraWeights alpha 0.01, 500 bins), keeping a hashed, energy-blind 50%
+  of S1's train and valid events, with the weights rebuilt on the kept rows, lowers S1's training
+  weight share from 38% to 25% (RHC 32% -> 21%) and raises S3's from 57% to 69% (RHC 65% -> 75%).
+  S3's weighted shape within the sample is unchanged (its share above 10 GeV 0.492 -> 0.497, RHC
+  0.485 -> 0.498; S3 effective N 167k -> 168k FHC); the pooled share above 10 GeV rises 29.6% -> 35.7%
+  (RHC 32.1% -> 38.2%) because S1 lies below 10 GeV. ESS 18.9% -> 22.3% (RHC 20.6% -> 24.1%).
+  Side effects: input normalisation stats come from fewer S1 rows; mean event weight +19% FHC, +15% RHC.
+  Prediction: S3 improves over r06 (resolution, ellipse fraction, 5/10/15% bands, peak pull) and S1
+  loses some. Judged as a whole on the leaderboard against r06 (and r05), same test set; no noise floor yet.
+horns: [fhc, rhc]
+add:
+  subsample:          # new key: loader drops these rows before building datasets and the weighter
+    sample: 1         # only sample-1 rows are touched
+    keep: 0.5         # keep a row if splitmix64(packed(run,subrun,cycle,evt) XOR seed) / 2^64 < keep
+    seed: 20261104    # different from the split seed 20261029, so independent of the split
+    splits: [train, valid]   # test rows are never touched
+resources:
+  mem: 80G            # r05 MaxRSS about 48-52 GB; the full file is still read
+  time: "08:00:00"    # r05: FHC 3h21, RHC 2h39; fewer rows per epoch, maybe more epochs

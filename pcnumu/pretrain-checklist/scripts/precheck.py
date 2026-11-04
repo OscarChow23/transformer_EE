@@ -542,6 +542,9 @@ def scan_data(cfg, rep, tmpdir, max_rows, overlap_files):
                 rep.add("INFO", "Split", f"split from column `{sc}` (fixed upstream, file order kept): total " +
                         ", ".join(f"{lab} {tot.get(lab, 0)}" for lab in ("train", "valid", "test")) +
                         ("; " + "; ".join(lines) if lines else ""))
+        if cfg.get("subsample"):  # this scan does not apply the loader's subsample cut, so flag that its counts are pre-cut
+            rep.add("WARN", "Split", f"subsample {cfg['subsample']}: the counts and weights above are BEFORE this cut; "
+                                     "the loader drops those rows (job log line `subsample dropped:`).")
         ts, vs = (cfg.get("test_size"), cfg.get("valid_size")) if not sc else (0, 0)
         nt = int(n * ts) if isinstance(ts, float) else ts
         nv = int(n * vs) if isinstance(vs, float) else vs
