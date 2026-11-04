@@ -1,0 +1,21 @@
+# Smoke test of r07 through the loop: the loader's subsample cut inside a real Slurm job (log line
+# `subsample dropped:`), flattening plot, training and checkpoints, on the 2% smoke files, 2 epochs.
+# Not a physics result (different, smaller test set); it only has to run cleanly before the full r07 is signed.
+trial: r07_s1-subsample-smoke
+status: planned
+baseline: r07_s1-subsample
+hypothesis: >-
+  The loop's generated r07 jobs run end to end in Slurm with the subsample cut (about half of the
+  smoke files' sample-1 train/valid rows dropped, test rows untouched) before the full r07 uses the GPU.
+horns: [fhc, rhc]
+overrides:
+  model.epochs: 2
+horn_overrides:
+  fhc:
+    data_path: /data/nova/chow/transformerEE/datasets/mprod6_1/training_v3/derived/dataset_transformer_ee_fd_fhc_nonswap_training_v3_split_v3features_smoke.csv
+  rhc:
+    data_path: /data/nova/chow/transformerEE/datasets/mprod6_1/training_v3/derived/dataset_transformer_ee_fd_rhc_nonswap_training_v3_split_v3features_smoke.csv
+resources:
+  partition: test   # 2 h limit
+  time: "01:00:00"
+  mem: 32G          # smoke files are about 120 MB
