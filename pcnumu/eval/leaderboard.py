@@ -89,19 +89,21 @@ def row_for(tdir, horn):
     return r
 
 
-HEAD = [  # (column title, key, formatter)
-    ("trueE res S1 %", "trueE_S1_resolution", pct), ("S2", "trueE_S2_resolution", pct),
-    ("S3", "trueE_S3_resolution", pct), ("S3 bias %", "trueE_S3_bias", pct),
-    ("S3 within ±10 %", "trueE_S3_band_10", lambda x: pct(x, 1)),
-    ("trueLepE res S3 %", "trueLepE_S3_resolution", pct),
-    ("ellipse S1 %", "ellipse_S1", lambda x: pct(x, 1)), ("S2", "ellipse_S2", lambda x: pct(x, 1)),
-    ("S3", "ellipse_S3", lambda x: pct(x, 1)),
-    ("peak pull S1", "peak_pull_S1", lambda x: "" if x is None else f"{x:+.1f}"),
-    ("S3", "peak_pull_S3", lambda x: "" if x is None else f"{x:+.1f}"),
-    ("pull slope S1", "pull_slope_S1", lambda x: "" if x is None else f"{x:.3f}"),
-    ("S3", "pull_slope_S3", lambda x: "" if x is None else f"{x:.3f}"),
-    ("best epoch", "best_epoch", lambda x: f"{x}"),
-]
+HEAD = {  # per-horn tables: title -> [(column title, key, formatter)]; full names so no header is ambiguous
+    "Energy resolution and bias": [
+        ("trueE res S1 %", "trueE_S1_resolution", pct), ("trueE res S2 %", "trueE_S2_resolution", pct),
+        ("trueE res S3 %", "trueE_S3_resolution", pct), ("trueE bias S3 %", "trueE_S3_bias", pct),
+        ("S3 within ±10 %", "trueE_S3_band_10", lambda x: pct(x, 1)),
+        ("trueLepE res S3 %", "trueLepE_S3_resolution", pct)],
+    "Ellipse and peak learning": [
+        ("ellipse S1 %", "ellipse_S1", lambda x: pct(x, 1)), ("ellipse S2 %", "ellipse_S2", lambda x: pct(x, 1)),
+        ("ellipse S3 %", "ellipse_S3", lambda x: pct(x, 1)),
+        ("peak pull S1", "peak_pull_S1", lambda x: "" if x is None else f"{x:+.1f}"),
+        ("peak pull S3", "peak_pull_S3", lambda x: "" if x is None else f"{x:+.1f}"),
+        ("pull slope S1", "pull_slope_S1", lambda x: "" if x is None else f"{x:.3f}"),
+        ("pull slope S3", "pull_slope_S3", lambda x: "" if x is None else f"{x:.3f}"),
+        ("best epoch", "best_epoch", lambda x: f"{x}")],
+}
 
 
 def main():
@@ -140,13 +142,15 @@ def main():
             w = csv.DictWriter(f, fieldnames=keys)
             w.writeheader()
             w.writerows(rows)
-        md += [f"## {horn.upper()} (test set `{ref['fingerprint'][:12]}`)", "",
-               "| model | change | " + " | ".join(h for h, _, _ in HEAD) + " |",
-               "|---|---|" + "---|" * len(HEAD)]
-        for r in rows:
-            link = f"[[#{r['trial']}\\|{r['trial'].split('_')[0]}]]"  # \| : a bare pipe would split the table cell
-            md.append(f"| {link} | {r['change']} | " + " | ".join(fmt(r[k]) for _, k, fmt in HEAD) + " |")
-        md.append("")
+        md += [f"## {horn.upper()} (test set `{ref['fingerprint'][:12]}`)", ""]
+        for title, cols in HEAD.items():
+            md += [f"**{title}**", "", "| model | baseline | " + " | ".join(h for h, _, _ in cols) + " |",
+                   "|---|---|" + "---:|" * len(cols)]
+            for r in rows:
+                link = f"[[#{r['trial']}\\|{r['trial'].split('_')[0]}]]"  # \| : a bare pipe would split the table cell
+                vs = r["baseline"].split("_")[0] or "root"  # full change is in the model's section below
+                md.append(f"| {link} | {vs} | " + " | ".join(fmt(r[k]) for _, k, fmt in cols) + " |")
+            md.append("")
     md += ["## Models", ""]
     for trial in sorted(entries):
         e = entries[trial]
