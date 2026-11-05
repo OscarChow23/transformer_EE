@@ -4,7 +4,7 @@
 # previews: pcnumu-runs/r07_s1-subsample/{preview,flattening_scan}/; decisions: second-brain
 # findings/2026-11-04-r07-s1-subsample-preview. Needs the loader `subsample` support (not written yet).
 trial: r07_s1-subsample
-status: planned
+status: done   # trained 4-5 Nov 2026 (jobs 119, 120); scorecards 5 Nov
 baseline: r06_flat-alpha001
 hypothesis: >-
   On top of r06 (pooled FlatSpectraWeights alpha 0.01, 500 bins), keeping a hashed, energy-blind 50%

@@ -144,7 +144,7 @@ def main():
                "| model | change | " + " | ".join(h for h, _, _ in HEAD) + " |",
                "|---|---|" + "---|" * len(HEAD)]
         for r in rows:
-            link = f"[[#{r['trial']}|{r['trial'].split('_')[0]}]]"
+            link = f"[[#{r['trial']}\\|{r['trial'].split('_')[0]}]]"  # \| : a bare pipe would split the table cell
             md.append(f"| {link} | {r['change']} | " + " | ".join(fmt(r[k]) for _, k, fmt in HEAD) + " |")
         md.append("")
     md += ["## Models", ""]
