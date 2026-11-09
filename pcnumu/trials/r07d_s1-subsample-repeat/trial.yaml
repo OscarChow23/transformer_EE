@@ -1,0 +1,17 @@
+# DRAFT 9 Nov 2026, not signed. Repeat d of r07, unchanged: measures run-to-run spread (the noise floor).
+# Three repeats (r07b/c/d) + the original r07 give 4 runs per horn. Training is unseeded (no torch
+# manual_seed): the split (hashed split column) and the S1 subsample (hashed, seed 20261104) are identical,
+# so only weight initialisation, dropout and batch order differ between repeats.
+# Deliberately no noise: this measures r07's own spread, not a noisy configuration.
+trial: r07d_s1-subsample-repeat
+status: planned
+baseline: r07_s1-subsample
+hypothesis: >-
+  Identical r07 config retrained unseeded. The leaderboard metrics differ from r07 only by
+  training randomness (initialisation, dropout, batch order). Across r07 and repeats b, c, d the
+  per-metric spread (e.g. S3 trueE resolution, S3 ellipse fraction, S3 peak pull) gives the noise floor
+  for judging r06 vs r07 and later trials. Same test set (fingerprints must equal r05-r07).
+horns: [fhc, rhc]
+resources:
+  mem: 80G            # r07 MaxRSS 37-40 GB
+  time: "08:00:00"    # r07: FHC 2h20, RHC 2h36
