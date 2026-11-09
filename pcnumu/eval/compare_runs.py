@@ -137,6 +137,30 @@ def main():
         fig.savefig(os.path.join(a.out_dir, f"vs_true_{t}.png"), dpi=150)
         plt.close(fig)
 
+        # Shapes, not just errors: does the predicted spectrum reproduce the true one (peak pull shows here)?
+        if all(np.array_equal(runs[0][2][t], tr[t]) for _, _, tr, _ in runs):
+            bins = np.arange(0.0, hi + 1e-9, 0.1)
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7, 6.5), sharex=True, height_ratios=(3, 1))
+            n_true = np.histogram(runs[0][2][t], bins)[0]
+            ax1.stairs(n_true, bins, fill=True, color="#d0d0d0", label="true")
+            for (label, _, _, pred), st in zip(runs, STYLES):
+                n = np.histogram(pred[t], bins)[0]
+                ax1.stairs(n, bins, color=st["color"], ls=st["ls"], lw=2, label=f"reco {label}")
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ax2.stairs(n / n_true, bins, color=st["color"], ls=st["ls"], lw=2)
+            ax2.axhline(1, color=MUTED, lw=1)
+            ax2.set_ylim(0.5, 1.5)
+            ax1.set_ylabel("test events / 0.1 GeV")
+            ax2.set_ylabel("reco / true")
+            ax2.set_xlabel(f"{t} [GeV] (grey: true; lines: predicted)")
+            for ax in (ax1, ax2):
+                style_axes(ax)
+            ax1.legend(frameon=False, fontsize=8)
+            ax1.set_title(f"{t}: predicted vs true spectrum, same test events")
+            fig.tight_layout()
+            fig.savefig(os.path.join(a.out_dir, f"spectrum_{t}.png"), dpi=150)
+            plt.close(fig)
+
     print(f"wrote {a.out_dir}")
     print(open(os.path.join(a.out_dir, "summary.md")).read())
 
