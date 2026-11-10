@@ -137,6 +137,37 @@ class Behaviour(unittest.TestCase):
             create_weighter(cfg, self.y)  # pandas path / any caller without samples
         self.assertTrue(create_weighter(cfg, self.y, sample=self.s).needs_sample)
 
+    def test_hand_computed(self):
+        """Independent oracle: weights worked out by hand for a tiny sample (lo 1, hi 2, ease 1, alpha 0)."""
+        y = np.array([1.05] * 10 + [1.55] * 5 + [2.5] * 2 + [0.5, 4.0])
+        wt = PerSampleFlatWeights(y, np.ones(y.size, int), {"1": {"lo": 1.0, "hi": 2.0, "ease": 1.0, "alpha": 0.0}})
+        # bins of 0.1 over [1, 3): counts 10 (1.0-1.1), 5 (1.5-1.6), 2 (2.5-2.6); w_bin = 1/(count + 1)
+        norm = 15 / (10 / 11 + 5 / 6)                    # the 15 core rows average 1
+        b0, b5, b15, empty = norm / 11, norm / 6, norm / 3, norm / 1
+        ease = b15 ** (1 - 0.5)                           # 2.5 GeV is halfway through the ease-off
+        scale = 19 / (10 * b0 + 5 * b5 + 2 * ease + 1 + 1)
+        np.testing.assert_allclose(wt.getweight(y, np.ones(y.size, int)),
+                                   scale * np.array([b0] * 10 + [b5] * 5 + [ease] * 2 + [1, 1]), rtol=1e-12)
+        # rows it was not fitted on: an empty core bin, an occupied bin, the ease-off, outside (below lo, at hi+ease).
+        # Bin edges come from arange (as in the preview), so a value exactly on a nominal edge may fall either side.
+        q = np.array([1.25, 1.55, 2.25, 0.99, 3.0])
+        want = scale * np.array([empty, b5, empty ** 0.75, 1, 1])
+        np.testing.assert_allclose(wt.getweight(q, np.ones(q.size, int)), want, rtol=1e-12)
+
+    def test_bad_params_and_inputs(self):
+        y, s = self.y, self.s
+        for bad in ({"share": float("nan")}, {"alpha": float("nan")}, {"alpha": -0.1}, {"ease": 0.0}, {"hi": 1.0}):
+            params = {k: {**v, "share": 0.3} for k, v in FHC.items()} if "share" in bad else dict(FHC)
+            params["2"] = {**params["2"], **bad}
+            with self.assertRaises(ValueError, msg=str(bad)):
+                PerSampleFlatWeights(y, s, params)
+        with self.assertRaises(ValueError):  # 1 and "1" are the same sample
+            PerSampleFlatWeights(y, s, {**FHC, 1: FHC["1"]})
+        with self.assertRaises(ValueError):
+            PerSampleFlatWeights(y, s, {True: FHC["1"], "2": FHC["2"], "3": FHC["3"]})
+        with self.assertRaises(ValueError):
+            self.wt.getweight(np.array([1.5, np.nan]), np.array([1, 1]))
+
     def test_share(self):
         """share fixes each sample's fraction of the total weight; the shape within a sample is unchanged."""
         shares = {"1": 0.5467, "2": 0.0494, "3": 0.4039}

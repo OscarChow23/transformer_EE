@@ -7,11 +7,12 @@ status: planned
 baseline: r05_v3data-allsamples_v3features
 hypothesis: >-
   Flattening each sample's own trueE spectrum over 1-5 GeV (S1 alpha 0.05, S2/S3 alpha 0.02; easing back
-  to weight 1 by 8 GeV; each sample's weights average 1) instead of r05's pooled alpha 0.05 reduces S3's
+  over 5-8 GeV to the no-boost level, i.e. weight 1 before each sample is scaled to average 1) instead of r05's pooled alpha 0.05 reduces S3's
   pull towards the ~2 GeV peak to about r06's level (preview: toy peak pull FHC ~6 vs r05 ~10, r06 ~5)
   while reweighting no harder than r05 (S3 ESS ~49% FHC / 60% RHC vs r05 50% / 53%), so S3 resolution
   stays near r05's (15.2% FHC / 17.2% RHC) instead of r06's (18.8 / 20.7). S1/S2 change little in
-  1-5 GeV; S3 events above 5 GeV are no longer boosted. Training is seeded (seed 1): same initial
+  1-5 GeV; S3 events above 5 GeV get progressively less boost and none from 8 GeV
+  (r05 boosted them ~17x). Training is seeded (seed 1): same initial
   weights and batch order on rerun, not bit-identical on GPU; r05 was unseeded, so r08-r05 is judged
   against the r07 noise floor. Loss values are ~5-10x r05's (mean weight 1 vs ~0.2) and not comparable.
   Report everything; judge after.

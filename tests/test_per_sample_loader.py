@@ -87,11 +87,12 @@ class LoaderWeights(unittest.TestCase):
             n += len(y)
         self.assertGreater(n, 100)
 
-    def test_repeat_reads_identical(self):
-        a = [b[4] for b in self.batches(self.valid, 3)]
-        b = [b[4] for b in self.batches(self.valid, 3)]
-        for x, y in zip(a, b):
-            self.assertTrue(torch.equal(x, y))
+    def test_cached_item_keeps_its_weight(self):
+        ds = self.valid.dataset
+        first, second = ds[3], ds[3]
+        if ds.use_cache:
+            self.assertIn(3, ds.cached)
+        self.assertTrue(torch.equal(first[4], second[4]))
 
 
 if __name__ == "__main__":

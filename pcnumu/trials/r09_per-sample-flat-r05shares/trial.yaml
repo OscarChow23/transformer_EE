@@ -9,8 +9,9 @@ baseline: r08_per-sample-flat
 hypothesis: >-
   Same per-sample shapes as r08, but each sample keeps r05's share of the total training weight
   (FHC S1/S2/S3 54.7/4.9/40.4%, RHC 48.2/3.5/48.3%) instead of its share of events (FHC 73.8/4.3/21.9%,
-  RHC 69.4/3.3/27.2%). r09 vs r05 isolates the per-sample shape change; r09 vs r08 isolates the sample
-  shares. Expectation (not a prediction from data): S3 resolution closer to r05's in r09 than in r08,
+  RHC 69.4/3.3/27.2%). r09 vs r08 changes only the sample shares. r09 vs r05 keeps r05's sample shares but
+  changes the weighting within each sample, and also adds seeding (seed 1) and a different overall weight
+  scale (mean 1 vs ~0.2; AdamW is close to, not exactly, invariant to that). Expectation (not a prediction from data): S3 resolution closer to r05's in r09 than in r08,
   because S3 keeps about twice r08's share of the training. Seed 1, as r08. Report everything; judge after.
 horns: [fhc, rhc]
 horn_overrides:

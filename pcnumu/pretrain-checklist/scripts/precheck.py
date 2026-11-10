@@ -633,14 +633,18 @@ def check_per_sample_weights(cfg, y, s, rep):
     """Fit the real PerSampleFlatWeights on the train rows (after the loader's row drop), as training will."""
     S = "Targets & weights"
     sys.path.insert(0, rep.facts["code_dir"])
-    from transformer_ee.utils.weights import PerSampleFlatWeights  # pylint: disable=C0415
+    from transformer_ee.utils.weights import PerSampleFlatWeights, _sample_labels  # pylint: disable=C0415
     try:
         wt = PerSampleFlatWeights(y, s, **cfg["weight"].get("kwargs", {}))
+        w = wt.getweight(y, s)
+        ss = _sample_labels(s, set(wt.params))  # same label rules as the weighter
     except (ValueError, TypeError) as exc:
         rep.add("FAIL", S, f"PerSampleFlatWeights cannot be fitted on the train rows: {exc}")
         return
-    w = wt.getweight(y, s)
-    ss = s.astype(np.int64)
+    if not (np.isfinite(w).all() and (w > 0).all()):
+        rep.add("FAIL", S, f"PerSampleFlatWeights gives {int((~np.isfinite(w)).sum())} non-finite and "
+                           f"{int((w <= 0).sum())} non-positive weights on the train rows.")
+        return
     rows, facts = [], {}
     for k, p in sorted(wt.params.items()):
         m = ss == k

@@ -87,10 +87,15 @@ class PerSampleFlatWeights:
         for k, p in per_sample.items():
             if set(p) - {"share"} != self.KEYS:
                 raise ValueError(f"sample {k}: expected keys {sorted(self.KEYS)} (+ optional share), got {sorted(p)}")
-            f = float(k)
-            if f != int(f):
-                raise ValueError(f"bad sample key {k!r}")
-            params[int(f)] = {n: float(p[n]) for n in p}
+            key = int(_sample_labels([k], {int(float(k))})[0])  # bool/fractional keys rejected like labels
+            if key in params:
+                raise ValueError(f"sample key {k!r} given twice (int and str keys normalise to the same sample)")
+            q = {n: float(p[n]) for n in p}
+            if not all(np.isfinite(v) for v in q.values()) or not (q["hi"] > q["lo"] and q["ease"] > 0 and q["alpha"] >= 0):
+                raise ValueError(f"sample {k}: need finite values, hi > lo, ease > 0, alpha >= 0; got {p}")
+            params[key] = q
+        if not (np.isfinite(width) and width > 0):
+            raise ValueError(f"bad bin width {width}")
         with_share = [k for k, p in params.items() if "share" in p]
         if with_share and (len(with_share) != len(params) or any(params[k]["share"] <= 0 for k in params)):
             raise ValueError("share must be given, and positive, for every sample or for none")
@@ -127,6 +132,8 @@ class PerSampleFlatWeights:
     def getweight(self, x, sample):
         """Weight(s) for trueE x of the given sample(s); scalar in, scalar out."""
         xa = np.atleast_1d(np.asarray(x, dtype=np.float64))
+        if not np.isfinite(xa).all():
+            raise ValueError("non-finite trueE has no defined weight")
         s = _sample_labels(sample, set(self.params))
         if s.size != xa.size:
             raise ValueError(f"{xa.size} values but {s.size} sample labels")
