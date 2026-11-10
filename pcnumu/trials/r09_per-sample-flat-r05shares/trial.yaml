@@ -1,0 +1,35 @@
+# 10 Nov 2026: r08 with each sample's share of the total training weight set to r05's, so r09 vs r05 changes only
+# the shape within each sample, and r08 vs r09 changes only the sample shares. Queued right after r08.
+# Shares: FlatSpectraWeights(alpha 0.05, bins 500) on the train rows, as r05 trained
+# (pcnumu-runs/r08_per-sample-flat/check1_loader_weights.txt; recomputed on the cached train rows).
+# No input noise: same decided exception as r08.
+trial: r09_per-sample-flat-r05shares
+status: planned
+baseline: r08_per-sample-flat
+hypothesis: >-
+  Same per-sample shapes as r08, but each sample keeps r05's share of the total training weight
+  (FHC S1/S2/S3 54.7/4.9/40.4%, RHC 48.2/3.5/48.3%) instead of its share of events (FHC 73.8/4.3/21.9%,
+  RHC 69.4/3.3/27.2%). r09 vs r05 isolates the per-sample shape change; r09 vs r08 isolates the sample
+  shares. Expectation (not a prediction from data): S3 resolution closer to r05's in r09 than in r08,
+  because S3 keeps about twice r08's share of the training. Seed 1, as r08. Report everything; judge after.
+horns: [fhc, rhc]
+horn_overrides:
+  fhc:
+    weight:
+      name: PerSampleFlatWeights
+      kwargs:
+        per_sample:
+          "1": {lo: 1.0, hi: 5.0, ease: 3.0, alpha: 0.05, share: 0.5467}
+          "2": {lo: 1.0, hi: 5.0, ease: 3.0, alpha: 0.02, share: 0.0494}
+          "3": {lo: 1.0, hi: 5.0, ease: 3.0, alpha: 0.02, share: 0.4039}
+  rhc:
+    weight:
+      name: PerSampleFlatWeights
+      kwargs:
+        per_sample:
+          "1": {lo: 0.9, hi: 5.0, ease: 3.0, alpha: 0.05, share: 0.4817}
+          "2": {lo: 1.0, hi: 5.0, ease: 3.0, alpha: 0.02, share: 0.0351}
+          "3": {lo: 1.0, hi: 5.0, ease: 3.0, alpha: 0.02, share: 0.4831}
+resources:
+  mem: 80G
+  time: "08:00:00"

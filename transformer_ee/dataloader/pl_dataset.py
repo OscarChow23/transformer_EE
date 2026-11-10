@@ -113,7 +113,8 @@ class Polars_Dataset(Dataset): # pylint: disable=C0103, W0223
             print("In evaluation mode, target = 0 and weighter = 1.")
         elif weighter is None:
             self.weighter = create_weighter(
-                self.config, self.df[self.targetname[0]].to_numpy()
+                self.config, self.df[self.targetname[0]].to_numpy(),
+                sample=self.df["sample"].to_numpy() if "sample" in self.df.columns else None,
             )
             print("Created weighter from config and data. Type: ", type(self.weighter))
         else:
@@ -241,8 +242,11 @@ class Normalized_Polars_Dataset_with_cache(Polars_Dataset): # pylint: disable=C0
         _weight = 1.0
         if not self.eval:
             _target = torch.Tensor([self.df[index, t] for t in self.targetname])
+            _y0 = self.df[index, self.targetname[0]]
             _weight = torch.Tensor(
-                [self.weighter.getweight(self.df[index, self.targetname[0]])]
+                [self.weighter.getweight(_y0, self.df[index, "sample"])
+                 if getattr(self.weighter, "needs_sample", False)
+                 else self.weighter.getweight(_y0)]
             )
 
         return_tuple = (

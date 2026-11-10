@@ -410,6 +410,7 @@ def scan_data(cfg, rep, tmpdir, max_rows, overlap_files):
         stats = {c: {"n": 0, "nonfin": 0, "sum": 0.0, "sumsq": 0.0, "min": np.inf, "max": -np.inf, "eq0": 0, "eqm5": 0, "eqm1": 0}
                  for c in vec + sca}
         tvals = {t: [] for t in tgt}
+        train_fit = []
         nprong, len_mismatch = {}, 0
         samples, keys, split_counts = {}, [], {}
         has_ids = all(c in header for c in ID_COLS)
@@ -449,6 +450,9 @@ def scan_data(cfg, rep, tmpdir, max_rows, overlap_files):
                 keys.extend(df.select(ID_COLS).iter_rows())
             for t in tgt:
                 tvals[t].append(df[t].cast(pl.Float64, strict=False).to_numpy())
+            if sc and sc in header and "sample" in header:  # the rows the loader fits its weighter on
+                tr = df.filter(pl.col(sc) == "train")
+                train_fit.append((tr[tgt[0]].cast(pl.Float64, strict=False).to_numpy(), tr["sample"].to_numpy()))
             base_len = None
             for c in vec:
                 s = df[c].fill_null("").replace("", "0").str.split(",")
@@ -517,8 +521,17 @@ def scan_data(cfg, rep, tmpdir, max_rows, overlap_files):
             rep.add("FAIL" if bad else "INFO", "Targets & weights", f"`{t}` quantiles [0,1,50,99,100]%: {q}; non-finite {bad}.")
             if nonpos and any("percentage" in n for n in dget(cfg, "loss.kwargs.base_loss_names", [])):
                 rep.add("FAIL", "Targets & weights", f"`{t}` has {nonpos} values ≤ 0 with a percentage loss → inf/huge loss.")
-        if cfg.get("weight", {}).get("name") == "FlatSpectraWeights" and tvals[tgt[0]]:
+        wname = cfg.get("weight", {}).get("name")
+        if wname == "FlatSpectraWeights" and tvals[tgt[0]]:
             check_weights(cfg, np.concatenate(tvals[tgt[0]]), rep)
+        elif wname == "PerSampleFlatWeights":
+            if not train_fit:
+                rep.add("FAIL", "Targets & weights", "PerSampleFlatWeights needs `sample` and the split column; not found.")
+            else:
+                check_per_sample_weights(cfg, np.concatenate([a for a, _ in train_fit]),
+                                         np.concatenate([b for _, b in train_fit]), rep)
+        elif wname is not None:
+            rep.add("FAIL", "Targets & weights", f"precheck does not know weighter `{wname}`; it would go unchecked.")
         # split
         n = kept
         sc = cfg.get("split_column")
@@ -614,6 +627,36 @@ def other_keys(path, tmpdir):
     finally:
         if tmp:
             os.remove(tmp)
+
+
+def check_per_sample_weights(cfg, y, s, rep):
+    """Fit the real PerSampleFlatWeights on the train rows (after the loader's row drop), as training will."""
+    S = "Targets & weights"
+    sys.path.insert(0, rep.facts["code_dir"])
+    from transformer_ee.utils.weights import PerSampleFlatWeights  # pylint: disable=C0415
+    try:
+        wt = PerSampleFlatWeights(y, s, **cfg["weight"].get("kwargs", {}))
+    except (ValueError, TypeError) as exc:
+        rep.add("FAIL", S, f"PerSampleFlatWeights cannot be fitted on the train rows: {exc}")
+        return
+    w = wt.getweight(y, s)
+    ss = s.astype(np.int64)
+    rows, facts = [], {}
+    for k, p in sorted(wt.params.items()):
+        m = ss == k
+        wk, yk = w[m], y[m]
+        peak = wk[(yk > 1.8) & (yk < 2.2)].mean()
+        ess = wk.sum() ** 2 / (wk ** 2).sum() / wk.size
+        hi = wk[yk >= 5].sum() / wk.sum()
+        rows.append(f"S{k} {p}: rows {m.sum()}, mean {wk.mean():.4f}, max ÷ 2 GeV event {wk.max() / peak:.1f}, "
+                    f"ESS {ess:.1%}, weight share ≥5 GeV {hi:.1%} (events {(yk >= 5).mean():.1%})")
+        facts[str(k)] = {"rows": int(m.sum()), "mean": float(wk.mean()), "max_over_peak": float(wk.max() / peak),
+                         "ess_frac": float(ess), "share_ge5": float(hi)}
+        if abs(wk.mean() - 1) > 1e-9:
+            rep.add("FAIL", S, f"S{k}: per-sample mean weight {wk.mean()} ≠ 1.")
+    ess_all = w.sum() ** 2 / (w ** 2).sum() / w.size
+    rep.add("INFO", S, "PerSampleFlatWeights on the train rows: " + "; ".join(rows) + f". Combined ESS {ess_all:.1%}.")
+    rep.facts["weights"] = {"per_sample": facts, "ess_frac": float(ess_all), "mean_event_weight": float(w.mean())}
 
 
 def check_weights(cfg, y, rep):

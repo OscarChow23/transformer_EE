@@ -80,7 +80,8 @@ def plot_flattening(cfg, code_dir, out):
              .collect())
     y = train[t0].cast(pl.Float64).to_numpy()
     smp = train["sample"].to_numpy().astype(str)
-    w = create_weighter(cfg, y).getweight(y)
+    wt = create_weighter(cfg, y, sample=smp)
+    w = wt.getweight(y, smp) if getattr(wt, "needs_sample", False) else wt.getweight(y)
     edges = np.linspace(0, 10, 101)
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7, 6.5), sharex=True)
     for k, label in SAMPLES:
@@ -96,7 +97,8 @@ def plot_flattening(cfg, code_dir, out):
         style_axes(ax)
     kwargs = cfg.get("weight", {}).get("kwargs", {})
     ax1.set_title("before flattening", fontsize=10)
-    ax2.set_title(f"after {cfg.get('weight', {}).get('name', 'no weights')} {kwargs}  "
+    shown = {k: v for k, v in kwargs.items() if k != "per_sample"}  # per-sample settings: see the trial spec
+    ax2.set_title(f"after {cfg.get('weight', {}).get('name', 'no weights')} {shown}  "
                   f"(mean event weight {w.mean():.2f})", fontsize=10)
     handles, labels = ax1.get_legend_handles_labels()
     fig.suptitle(f"{t0} spectrum of the training rows, before and after flattening", color=INK)
