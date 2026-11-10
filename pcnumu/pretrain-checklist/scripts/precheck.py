@@ -652,7 +652,11 @@ def check_per_sample_weights(cfg, y, s, rep):
                     f"ESS {ess:.1%}, weight share ≥5 GeV {hi:.1%} (events {(yk >= 5).mean():.1%})")
         facts[str(k)] = {"rows": int(m.sum()), "mean": float(wk.mean()), "max_over_peak": float(wk.max() / peak),
                          "ess_frac": float(ess), "share_ge5": float(hi)}
-        if abs(wk.mean() - 1) > 1e-9:
+        if "share" in p:  # each sample makes up its configured share of the total weight
+            want = p["share"] / sum(q["share"] for q in wt.params.values())
+            if abs(wk.sum() / w.sum() - want) > 1e-9:
+                rep.add("FAIL", S, f"S{k}: share of total weight {wk.sum() / w.sum():.6f} ≠ configured {want:.6f}.")
+        elif abs(wk.mean() - 1) > 1e-9:
             rep.add("FAIL", S, f"S{k}: per-sample mean weight {wk.mean()} ≠ 1.")
     ess_all = w.sum() ** 2 / (w ** 2).sum() / w.size
     rep.add("INFO", S, "PerSampleFlatWeights on the train rows: " + "; ".join(rows) + f". Combined ESS {ess_all:.1%}.")
