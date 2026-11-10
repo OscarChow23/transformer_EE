@@ -9,8 +9,8 @@ Before any shuffle, an unshuffled pass over the test rows must reproduce the mod
 and scorecard.json, or the run stops. Plan and decisions D1-D22:
 pcnumu-runs/plans/feature-importance-permutation-grill-handoff-20261110.md
 
-Writes importance.csv (one row per entry, seed, target, region, sample, metric), importance.png/pdf
-and README.md into OUT. If OUT/importance.csv exists, only the figure is redrawn.
+Writes importance.csv (one row per entry, seed, target, region, sample, metric), figures
+(importance_{resolution,bias,ellipse_migration}_sample{1,2,3,all}.png/pdf) and README.md into OUT. If OUT/importance.csv exists, only the figures are redrawn.
 """
 import argparse
 import csv
@@ -143,50 +143,73 @@ def run(net, v, s, m, true, smp, axes, cfg, seeds):
     return rows
 
 
+B, O, G, INKC = STYLE["1"]["color"], STYLE["2"]["color"], STYLE["3"]["color"], "#2b2b2b"
+LO, HI = "0.5-3", ">=3"
+REG = {LO: "true trueE 0.5–3 GeV", HI: "true trueE ≥ 3 GeV"}
+# figure -> (y label, [(target, metric, region, legend name, colour, marker, filled, sign, relative, baseline format)])
+FIGURES = {
+    "resolution": ("resolution change [%]  ↑ worse", [
+        (t, "resolution", r, f"{t} resolution", c, mk, r == LO, 1, True, lambda v: f"{100 * v:.1f}%")
+        for t, c, mk in (("trueE", B, "o"), ("trueLepE", O, "s")) for r in (LO, HI)]),
+    "bias": ("bias shift [pp]", [
+        (t, "bias", r, f"{t} bias", c, mk, r == LO, 1, False, lambda v: f"{100 * v:+.1f}%")
+        for t, c, mk in (("trueE", B, "o"), ("trueLepE", O, "s")) for r in (LO, HI)]),
+    "ellipse_migration": ("event share change [pp]  ↑ worse", [
+        ("both", "ellipse_fraction", r, "share outside ellipse", G, "^", r == LO, -1, False,
+         lambda v: f"{100 * (1 - v):.0f}%") for r in (LO, HI)] + [
+        ("trueE", "migration_below_3", HI, "share of true trueE ≥ 3 GeV reconstructed < 3 GeV", INKC, "D", False, 1,
+         False, lambda v: f"{100 * v:.1f}%")]),
+}
+
+
+def band_name(g, members):
+    """Group band label in config terms: the shared prefix, or first … last input."""
+    if g == "slice":
+        return "scalar (slice)"
+    if g in ("dir", "start", "cvnpart", "bpf[0]", "bpf[1]", "bpf[2]"):
+        return f"png.{g}.*"
+    return f"{members[0]} … {members[-1]}"
+
+
 def plot(out, model_name):
+    """One figure per sample and metric family, inputs along x (D23). Legend values in brackets are
+    the unshuffled baseline; point = mean of the seeds, bar = lowest to highest (see README)."""
     d = pd.read_csv(os.path.join(out, "importance.csv"), dtype={"sample": str})
-    d = d[(d["sample"] == "all") & (d["entry"] != "baseline")]
-    title = (f"Permutation importance, {model_name}: validation set, all samples; "
-             f"point = mean of {d['seed'].nunique()} seeds, bar = lowest to highest seed")
+    base, d = d[d["entry"] == "baseline"], d[d["entry"] != "baseline"]
     names = list(dict.fromkeys(d["entry"]))
+    groups = [group(n) if n.startswith("png.") else "slice" for n in names]
+    labels = ["sample1+sample2+sample3" if n.startswith("sample") else n for n in names]
     x = np.arange(len(names))
-    fig, (top, bot) = plt.subplots(2, 1, figsize=(18, 9.5), sharex=True)
-    c = [STYLE[k]["color"] for k in "123"]
-    for target, metric, label, color, marker, ax in (
-            ("trueE", "resolution", "trueE resolution", c[0], "o", top),
-            ("trueLepE", "resolution", "trueLepE resolution", c[1], "s", top),
-            ("both", "ellipse_fraction", "ellipse fraction (a drop plots upwards; provisional axes)", c[2], "^", top),
-            ("trueE", "bias", "trueE bias", c[0], "o", bot), ("trueLepE", "bias", "trueLepE bias", c[1], "s", bot)):
-        for reg, ls, fill in (("0.5-3", "-", color), (">=3", "--", "white")):
-            q = d[(d["target"] == target) & (d["metric"] == metric) & (d["region"] == reg)]
-            y = 100 * (q["value"] - q["baseline"]) / (1 if metric == "bias" else q["baseline"])
-            if metric == "ellipse_fraction":
-                y = -y
-            a = y.groupby(q["entry"], sort=False).agg(["mean", "min", "max"]).loc[names]
-            ax.plot(x, a["mean"], ls=ls, lw=0.7, color=color, alpha=0.35)  # reading aid only
-            ax.errorbar(x, a["mean"], yerr=[a["mean"] - a["min"], a["max"] - a["mean"]], fmt=marker, ms=5,
-                        color=color, mfc=fill, capsize=2, lw=1,
-                        label=f"{label}, true trueE {'0.5–3' if reg == '0.5-3' else '≥ 3'} GeV")
-    g = [group(n) if n.startswith("png.") else "slice inputs" for n in names]
-    edges = [i for i in range(len(g)) if i == 0 or g[i] != g[i - 1]] + [len(g)]
-    for n, (lo, hi) in enumerate(zip(edges, edges[1:])):
-        for ax in (top, bot):
-            if n % 2:
-                ax.axvspan(lo - 0.5, hi - 0.5, color="#f0efeb", lw=0, zorder=0)
-        top.text((lo + hi - 1) / 2, 1.01, g[lo], transform=top.get_xaxis_transform(), ha="center", fontsize=7)
-    for ax, ylab in ((top, "change against unshuffled [%]\n(worse = up)"),
-                     (bot, "bias shift against unshuffled\n[percentage points]")):
-        ax.axhline(0, color="black", lw=0.8)
-        ax.set_ylabel(ylab)
-        style_axes(ax)
-        ax.legend(frameon=False, fontsize=8, ncol=2)
-    bot.set_xticks(x, [n.replace("png.", "") for n in names], rotation=90, fontsize=8)
-    bot.set_xlim(-0.5, len(names) - 0.5)
-    bot.set_xlabel("shuffled input (one at a time; sample1+2+3 shuffled together)")
-    top.set_title(title, fontsize=11, pad=22)
-    fig.tight_layout()
-    for ext in ("png", "pdf"):
-        fig.savefig(os.path.join(out, f"importance.{ext}"), dpi=150)
+    edges = [i for i in range(len(groups)) if i == 0 or groups[i] != groups[i - 1]] + [len(groups)]
+    run = model_name.split("_fhc_")[-1].split("_rhc_")[-1].split("_")[0] + (" FHC" if "_fhc_" in model_name else " RHC")
+    for k, sample_name in SAMPLES:
+        b0 = base[base["sample"] == k].set_index(["target", "metric", "region"])["value"]
+        for fig_name, (ylabel, series) in FIGURES.items():
+            fig, ax = plt.subplots(figsize=(18, 6.5))
+            for n, (a, b) in enumerate(zip(edges, edges[1:])):
+                if n % 2:
+                    ax.axvspan(a - 0.5, b - 0.5, color="#f0efeb", lw=0, zorder=0)
+                ax.text((a + b - 1) / 2, 1.01, band_name(groups[a], names[a:b]), transform=ax.get_xaxis_transform(), ha="center",
+                        fontsize=8, color="#6b6b6b")
+            for t, m, reg, name, c, mk, filled, sign, rel, fmt in series:
+                q = d[(d["sample"] == k) & (d["target"] == t) & (d["metric"] == m) & (d["region"] == reg)]
+                y = sign * 100 * (q["value"] - q["baseline"]) / (q["baseline"] if rel else 1)
+                s = y.groupby(q["entry"], sort=False).agg(["mean", "min", "max"]).loc[names]
+                ax.plot(x, s["mean"], ls="-" if filled else "--", lw=0.7, color=c, alpha=0.35)  # reading aid only
+                ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["min"], s["max"] - s["mean"]], fmt=mk, ms=5,
+                            color=c, mfc=c if filled else "white", capsize=2, lw=1,
+                            label=f"{name}{'' if m == 'migration_below_3' else ', ' + REG[reg]}   (unshuffled {fmt(b0[t, m, reg])})")
+            ax.axhline(0, color="black", lw=0.8)
+            ax.set_ylabel(ylabel)
+            style_axes(ax)
+            ax.legend(frameon=False, fontsize=8.5, title=f"one input shuffled at a time · point = mean of {d['seed'].nunique()} shuffles, bar = range", title_fontsize=8, alignment="left")
+            ax.set_xticks(x, labels, rotation=90, fontsize=8)
+            ax.set_xlim(-0.5, len(names) - 0.5)
+            ax.set_title(f"{sample_name} · {run}, validation", fontsize=11, pad=18)
+            fig.tight_layout()
+            for ext in ("png", "pdf"):
+                fig.savefig(os.path.join(out, f"importance_{fig_name}_sample{k}.{ext}"), dpi=150)
+            plt.close(fig)
 
 
 def main():
