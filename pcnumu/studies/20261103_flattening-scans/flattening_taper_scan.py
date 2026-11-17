@@ -6,7 +6,7 @@ moves from w_flat to 1 on a log scale, w = w_flat**(1 - f), f = (E - hi)/taper; 
 (natural share); below lo_k: the first bin's weight. Each sample is then rescaled to mean event weight 1.
 Combined ESS uses the identity ESS_all = N / sum_k(N_k / ESS_k) (each sample has mean weight 1).
 
-Usage: python -I pcnumu/eval/flattening_taper_scan.py --cache <train_<horn>.npz> --tag fhc --out <dir>
+Usage: python -I pcnumu/studies/20261103_flattening-scans/flattening_taper_scan.py --cache <train_<horn>.npz> --tag fhc --out <dir>
        [--lo 1:1.0,2:1.3,3:1.3] [--candidates "5.5/1,7/1,10/2;..."]
 """
 
@@ -172,7 +172,7 @@ def main():
     # combined totals for candidates
     if a.candidates:
         import sys  # pylint: disable=C0415
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
         from transformer_ee.utils.weights import FlatSpectraWeights  # pylint: disable=C0415
         combos = []
         for cand in a.candidates.split(";"):

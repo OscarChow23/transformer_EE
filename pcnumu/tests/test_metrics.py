@@ -1,6 +1,6 @@
-"""Unit checks for scorecard.py's ports of the ROOT macros and its train.log parser.
+"""Unit checks for pcnumu.core: the ports of the ROOT macros (metrics) and the train.log parser (data).
 
-    python pcnumu/eval/test_scorecard.py      (or pytest)
+    python -I pcnumu/tests/test_metrics.py      (or pytest)
 """
 import os
 import sys
@@ -8,8 +8,10 @@ import tempfile
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scorecard import _root_axis, _root_findbin, ellipse_axes, ellipse_fraction, errmap_bins, parse_losses  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from pcnumu.core.data import parse_losses  # noqa: E402
+from pcnumu.core.metrics import ellipse_axes, ellipse_fraction, errmap_bins  # noqa: E402
+from pcnumu.core.metrics import root_axis as _root_axis, root_findbin as _root_findbin  # noqa: E402
 
 
 def test_findbin_matches_taxis_edges():

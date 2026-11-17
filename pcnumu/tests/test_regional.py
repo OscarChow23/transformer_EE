@@ -1,14 +1,15 @@
-"""Synthetic checks for regional_comparison.py: window edges, denominators, ellipse boundary, empty windows.
+"""Synthetic checks for pcnumu.core.regional: window edges, denominators, ellipse boundary, empty windows.
 
-    python pcnumu/eval/test_regional_comparison.py      (or pytest)
+    python -I pcnumu/tests/test_regional.py      (or pytest)
 """
 import os
 import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from regional_comparison import CUTS, in_window, interval, model_metrics, wilson68, wkey  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from pcnumu.core.metrics import interval, wilson68  # noqa: E402
+from pcnumu.core.regional import CUTS, in_window, model_metrics, wkey  # noqa: E402
 
 
 def test_window_edges_lower_inclusive_upper_exclusive():

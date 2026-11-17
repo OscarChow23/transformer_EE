@@ -8,7 +8,7 @@ and writes per horn:
   metrics.csv / metrics.png    mean event weight, ESS, weight range, sample shares, flatness ratios
 
 Usage (conda env transformer_ee, PYTHONPATH=<repo>):
-  python -I pcnumu/eval/flattening_scan.py --config <effective_config.json> --out <dir>
+  python -I pcnumu/studies/20261103_flattening-scans/flattening_scan.py --config <effective_config.json> --out <dir>
 """
 
 import argparse

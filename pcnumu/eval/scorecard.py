@@ -1,201 +1,63 @@
 #!/usr/bin/env python
-"""Scorecard and diagnostics for one finished TransformerEE run (experiment loop, issue #3).
+"""Scorecard for one finished TransformerEE run: headline metrics, peak pull and diagnostic plots.
 
-    python scorecard.py RUN_DIR [--model-dir DIR] [--out-dir DIR]
+    python -I pcnumu/eval/scorecard.py RUN_DIR [--model-dir DIR] [--out-dir DIR]
+    python -I pcnumu/eval/scorecard.py RUN_DIR --peak-only     # (re)write peak_metrics.json only
 
-RUN_DIR is the run folder (the config's save_path: train.log, model_*/). Inputs are the
-model directory's result.csv, input.json and checkpoint_metadata.json, the run's train.log,
-and the test rows (split column == "test") of the run's data file. Nothing is re-inferred.
-
-Writes into OUT_DIR (default RUN_DIR/scorecard; refuses an existing directory):
-  scorecard.json      machine-readable scorecard; identical bytes for identical inputs
-  scorecard.sha256    sha256 of scorecard.json
-  scorecard.md        human-readable rendering
-  loss_curves.png     per-epoch train/valid loss from the last training session in train.log
-  loss_history.csv
-  errmap_<target>_sample<k>.png   error map, eval_model.C view_0to6 family, ±5/±10% bands
-  errmap_stats.csv    per-bin counts and 16/50/84th percentiles behind the error maps
-  ellipse_sample<k>.png           joint trueE/trueLepE error plane with the ellipse drawn
-
-Metric definitions are those of eval_by_sample.py (imported, not copied):
-r = (pred - true) / true; bias = median(r); resolution = (q84 - q16) / 2; tolerance-band
-fraction = share of events with |r| < band; window = trueE in [0.5, 6] GeV for both targets.
+RUN_DIR is the run folder (the config's save_path: train.log, model_*/). Inputs are the model
+folder's result.csv, input.json and checkpoint_metadata.json, the run's train.log, and the test
+rows of the run's data file. Nothing is re-inferred. Writes into OUT_DIR (default
+RUN_DIR/scorecard; refuses an existing directory):
+  scorecard.json / .sha256 / .md   headline metrics per target and sample; identical bytes for identical inputs
+  peak_metrics.json                peak pull, pull slope and bias curve per sample (metrics.peak_measures)
+  loss_curves.png, loss_history.csv
+  errmap_<target>_sample<k>.png    error map (eval_model.C view_0to6 family) with ±5/±10% bands
+  errmap_stats.csv                 per-bin counts and 16/50/84th percentiles behind the error maps
+  ellipse_sample<k>.png            joint trueE/trueLepE error plane with the frozen ellipse
+Metric definitions: pcnumu/core/metrics.py.
 """
 import argparse
 import csv
-import hashlib
 import json
 import os
-import re
-import subprocess
 import sys
 
-import matplotlib
+import numpy as np
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import polars as pl  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from matplotlib.colors import LogNorm  # noqa: E402
+from matplotlib.patches import Ellipse  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from eval_by_sample import SAMPLES, STYLE, WINDOW, find_model_dir, stats, style_axes  # noqa: E402
+from pcnumu.core import data, report, style  # noqa: E402
+from pcnumu.core.metrics import (BANDS, ERRMAP, PEAK_DEFINITIONS, PEAK_HIGH, PEAK_LOW, PEAK_VERSION,  # noqa: E402
+                                 SAMPLES, WINDOW, ellipse_axes, ellipse_fraction, errmap_bins,
+                                 in_headline_window, peak_measures, relative_error, sample_mask, stats)
 
 SCHEMA = "pcnumu-scorecard/2"  # 2: frozen ellipse, unbinned headline fraction
-BANDS = (0.05, 0.10, 0.15)
-ID_COLUMNS = ["run", "subrun", "cycle", "evt", "subevt"]
-# Ellipse in the (trueE error %, trueLepE error %) plane, centred at (0, 0). The axes are
-# frozen per test set in ellipse_frozen.json (issue #4); other test sets are flagged provisional.
-ELLIPSE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ellipse_frozen.json")
-ERRMAP = dict(bins=60, xmin=0.0, xmax=6.0)  # eval_model.C graph_resolution_stat "view_0to6_"
-GIT = "/data/chow/tools/git-env/bin/git"
-AXIS_LABEL = {"trueE": "true neutrino energy (trueE)", "trueLepE": "true muon energy (trueLepE)"}
+AXIS_LABEL = {"trueE": "True neutrino energy (GeV)", "trueLepE": "True muon energy (GeV)"}
 
 
-def sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def code_version():
-    """Commit and dirty flag of the checkout this script runs from (None if not a checkout)."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    git = GIT if os.path.exists(GIT) else "git"
-    try:
-        commit = subprocess.run([git, "-C", here, "rev-parse", "HEAD"], capture_output=True,
-                                text=True, check=True).stdout.strip()
-        dirty = bool(subprocess.run([git, "-C", here, "status", "--porcelain", "--untracked-files=no"],
-                                    capture_output=True, text=True, check=True).stdout.strip())
-        return dict(commit=commit, dirty=dirty)
-    except (OSError, subprocess.CalledProcessError):
-        return dict(commit=None, dirty=None)
-
-
-# ---------- inputs ----------
-def load_test_predictions(cfg, model_dir):
-    """Predictions aligned with the data file's test rows; same checks as eval_by_sample.py."""
-    sc = cfg.get("split_column")
-    if not sc:
-        sys.exit("config has no split_column; the frozen test set needs the split file")
-    targets = cfg["target"]
-    res = pl.read_csv(os.path.join(model_dir, "result.csv"))
-    test = (pl.scan_csv(cfg["data_path"], infer_schema_length=0)
-            .filter(pl.col(sc) == "test")
-            .select(ID_COLUMNS + ["sample"] + targets)
-            .collect())
-    if test.height != res.height:
-        sys.exit(f"row mismatch: {res.height} predictions vs {test.height} test rows in {cfg['data_path']}")
-    smp = test["sample"].to_numpy().astype(str)
-    if not set(smp) <= {"1", "2", "3"}:
-        sys.exit("unexpected sample labels")
-    true = {t: test[t].cast(pl.Float64).to_numpy() for t in targets}
-    pred = {t: res[f"pred_{t}"].to_numpy().astype(np.float64) for t in targets}
-    for t in targets:  # result.csv stores float32 truths: they must match the file row by row
-        rt = res[f"true_{t}"].to_numpy().astype(np.float64)
-        bad = int(np.sum(~np.isclose(rt, true[t], rtol=1e-5, atol=1e-6)))
-        if bad:
-            sys.exit(f"{bad} rows where result.csv true_{t} != test-row {t}: predictions are not aligned")
-        if not np.all(np.isfinite(true[t]) & (true[t] > 0)):
-            sys.exit(f"nonpositive or nonfinite {t}; cannot compute relative error")
-    # Identity of the test set: event IDs and sample labels of the test rows, in file order.
-    fingerprint = hashlib.sha256(test.select(ID_COLUMNS + ["sample"]).write_csv().encode()).hexdigest()
-    return smp, true, pred, fingerprint
-
-
-def parse_losses(log_path):
-    """Per-epoch (epoch, train_loss, valid_loss) from the LAST training session in train.log.
-
-    train.log is opened in append mode, so a re-launch into the same folder appends a second
-    session (r04 appended to r03's log). Sessions start at a "Start Time:" line.
-    """
-    pat = re.compile(r"^Epoch: (\d+), train_loss: (\S+), valid_loss: (\S+)\s*$")
-    sessions = [[]]
-    with open(log_path, errors="replace") as f:
-        for line in f:
-            if line.startswith("Start Time:"):
-                sessions.append([])
-            m = pat.match(line)
-            if m:
-                sessions[-1].append((int(m.group(1)), float(m.group(2)), float(m.group(3))))
-    n_sessions = sum(1 for s in sessions if s)
-    return (sessions[-1] if sessions[-1] else []), n_sessions
-
-
-# ---------- ellipse: port of graph_eval/eval_model.C ----------
-def _root_axis(v, nbins):
-    """Range as eval_model.C builds h2_energy_theta's x axis: data min/max, clamp_res_range
-    to [-200, 200], then pad 5% of max(1, width)."""
-    lo, hi = max(float(v.min()), -200.0), min(float(v.max()), 200.0)
-    if lo == hi:
-        lo, hi = lo - 1.0, hi + 1.0
-    pad = 0.05 * max(1.0, abs(hi - lo))
-    return lo - pad, hi + pad, nbins
-
-
-def _root_findbin(v, lo, hi, nbins):
-    """TAxis::FindBin for a fixed-width axis: 0 underflow, 1..nbins, nbins+1 overflow."""
-    b = 1 + np.floor(nbins * (v - lo) / (hi - lo)).astype(np.int64)
-    b[v < lo] = 0
-    b[v >= hi] = nbins + 1
-    return b
-
-
-def ellipse_fraction(x, y, a, b, nbins=200):
-    """fractionInsideEllipse(h2, 0, 0, a, b, 0) on a 200x200 TH2D filled with (x, y).
-
-    Bin centres are tested against the ellipse; the denominator is the histogram's in-range
-    content, so entries beyond about ±210% on either axis are not counted. The y axis gets the
-    same range rule as x (eval_model.C's y axis was an angle with a fixed ±180 range).
-    """
-    xa, ya = _root_axis(x, nbins), _root_axis(y, nbins)
-    bx, by = _root_findbin(x, *xa), _root_findbin(y, *ya)
-    ok = (bx >= 1) & (bx <= nbins) & (by >= 1) & (by <= nbins)
-    cx = xa[0] + (bx[ok] - 0.5) * (xa[1] - xa[0]) / nbins
-    cy = ya[0] + (by[ok] - 0.5) * (ya[1] - ya[0]) / nbins
-    inside = int(np.sum(cx * cx / (a * a) + cy * cy / (b * b) <= 1.0))
-    total = int(ok.sum())
-    return dict(fraction=inside / total if total else None, n_in_histogram=total,
-                n_out_of_range=int(x.size - total), x_range=[xa[0], xa[1]], y_range=[ya[0], ya[1]],
-                unbinned_fraction=float(np.mean(x * x / (a * a) + y * y / (b * b) <= 1.0)) if x.size else None)
-
-
-def ellipse_axes(fingerprint):
-    """Frozen axes for this test set, or the provisional fallback if it is not listed."""
-    spec = json.load(open(ELLIPSE_FILE))
-    for name, e in spec["frozen"].items():
-        for horn, fp in e["test_sets"].items():
-            if fp == fingerprint:
-                return dict(a_percent=e["a_percent"], b_percent=e["b_percent"], provisional=False,
-                            frozen_as=f"{name}/{horn}", definition=e["definition"])
-    fb = spec["provisional_fallback"]
-    return dict(a_percent=fb["a_percent"], b_percent=fb["b_percent"], provisional=True,
-                frozen_as=None, definition="unbinned")
-
-
-# ---------- scorecard ----------
+# ---------- numbers ----------
 def build_scorecard(cfg, model_dir, run_dir, smp, true, pred, fingerprint, losses, n_sessions):
     targets = cfg["target"]
     t0 = targets[0]
-    in_win = (true[t0] >= WINDOW[0]) & (true[t0] <= WINDOW[1])
-    masks = {k: (smp == k) if k != "all" else np.ones(smp.size, bool) for k, _ in SAMPLES}
-    r = {t: (pred[t] - true[t]) / true[t] for t in targets}
+    in_win = in_headline_window(true[t0])
+    r = {t: relative_error(pred[t], true[t]) for t in targets}
 
     metrics = {}
     for t in targets:
         metrics[t] = {}
         for k, _ in SAMPLES:
-            s = stats(r[t][masks[k] & in_win])
-            metrics[t][k] = dict(n=s["n"], n_outside_window=int(np.sum(masks[k] & ~in_win)),
+            m = sample_mask(smp, k)
+            s = stats(r[t][m & in_win])
+            metrics[t][k] = dict(n=s["n"], n_outside_window=int(np.sum(m & ~in_win)),
                                  bias=float(s["bias"]), resolution=float(s["res"]),
                                  band_05=s["f5"], band_10=s["f10"], band_15=s["f15"])
     axes = ellipse_axes(fingerprint)
     ellipse = {}
     if len(targets) >= 2:
         for k, _ in SAMPLES:
-            m = masks[k] & in_win
+            m = sample_mask(smp, k) & in_win
             e = ellipse_fraction(100 * r[targets[0]][m], 100 * r[targets[1]][m], axes["a_percent"], axes["b_percent"])
             # Headline = unbinned (exact per event); binned = eval_model.C port, kept as a cross-check.
             ellipse[k] = dict(fraction=e["unbinned_fraction"], binned_fraction=e["fraction"],
@@ -215,7 +77,7 @@ def build_scorecard(cfg, model_dir, run_dir, smp, true, pred, fingerprint, losse
         "split_column": cfg["split_column"],
         "test_set": dict(n=int(smp.size), counts={k: int(np.sum(smp == k)) for k in ("1", "2", "3")},
                          fingerprint_sha256=fingerprint,
-                         fingerprint_of=f"test rows' {'/'.join(ID_COLUMNS)}/sample, file order, CSV text"),
+                         fingerprint_of=f"test rows' {'/'.join(data.ID_COLUMNS)}/sample, file order, CSV text"),
         "definitions": dict(
             relative_error="r = (pred - true) / true", bias="median(r)", resolution="(q84 - q16) / 2 of r",
             tolerance_bands=[f"|r| < {b:g}" for b in BANDS],
@@ -224,7 +86,7 @@ def build_scorecard(cfg, model_dir, run_dir, smp, true, pred, fingerprint, losse
                      f"y = 100 r_{targets[1] if len(targets) > 1 else '-'} (unbinned); binned_fraction = "
                      "fractionInsideEllipse port (graph_eval/eval_model.C), 200x200 bins, bin centres, "
                      "in-range denominator"),
-            source="pcnumu/eval/eval_by_sample.py stats()"),
+            source="pcnumu/core/metrics.py stats()"),
         "metrics": metrics,
         "ellipse": dict(axes, by_sample=ellipse),
         "training": dict(best_epoch=best["epoch"], best_validation_loss=best["validation_loss"],
@@ -232,10 +94,21 @@ def build_scorecard(cfg, model_dir, run_dir, smp, true, pred, fingerprint, losse
                          epochs_run=len(losses), log_sessions=n_sessions,
                          loss_history="train.log per-epoch lines, last session, rounded to 4 decimals",
                          early_stopping=meta.get("early_stopping")),
-        "provenance": dict(hashes={name: sha256_file(p) for name, p in files.items() if os.path.exists(p)},
-                           scorecard_script_sha256=sha256_file(os.path.abspath(__file__)),
-                           code=code_version()),
+        "provenance": dict(hashes={name: data.sha256_file(p) for name, p in files.items() if os.path.exists(p)},
+                           scorecard_script_sha256=data.sha256_file(os.path.abspath(__file__)),
+                           code_sha256=data.code_hashes(os.path.abspath(__file__)),
+                           code=data.code_version()),
     }
+
+
+def build_peak(smp, true, pred, fingerprint, model_dir):
+    out = {"version": PEAK_VERSION, "target": "trueE", "definitions": PEAK_DEFINITIONS,
+           "low_bin_gev": list(PEAK_LOW), "high_bin_gev": list(PEAK_HIGH), "test_fingerprint": fingerprint,
+           "model_dir": model_dir, "by_sample": {}}
+    for s in ["1", "2", "3"]:
+        m = smp == s
+        out["by_sample"][s] = peak_measures(true["trueE"][m], pred["trueE"][m])
+    return out
 
 
 def render_md(sc, targets):
@@ -271,7 +144,7 @@ def render_md(sc, targets):
     return "\n".join(L)
 
 
-# ---------- diagnostics ----------
+# ---------- plots ----------
 def plot_losses(losses, best_epoch, best_loss, out):
     with open(os.path.join(out, "loss_history.csv"), "w", newline="") as f:
         w = csv.writer(f)
@@ -280,29 +153,15 @@ def plot_losses(losses, best_epoch, best_loss, out):
     if not losses:
         return
     ep, tr, va = (np.array(c) for c in zip(*losses))
-    fig, ax = plt.subplots(figsize=(7, 4.2))
-    ax.plot(ep, tr, color=STYLE["1"]["color"], marker="o", ms=4, lw=2, label="training (epoch mean, dropout on)")
-    ax.plot(ep, va, color=STYLE["all"]["color"], marker="D", ms=4, lw=2, ls="--", label="validation")
+    fig, ax = style.figure()
+    ax.plot(ep, tr, **{**style.SERIES[1], "ms": 4}, label="Training (epoch mean, dropout on)")
+    ax.plot(ep, va, **{**style.SERIES[0], "ms": 4}, label="Validation")
     # Best epoch from checkpoint_metadata.json: the log's 4-decimal losses can tie.
-    ax.axvline(best_epoch, color="#6b6b6b", lw=1, ls=":")
-    ax.annotate(f"best checkpoint: epoch {best_epoch}\nvalidation loss {best_loss:.6f}", (best_epoch, best_loss),
-                textcoords="offset points", xytext=(-8, 28), ha="right", fontsize=8)
-    ax.set(xlabel="epoch (zero-based)", ylabel="loss", title="Loss per epoch (train.log, last session)")
-    style_axes(ax)
-    ax.legend(frameon=False, fontsize=8)
-    fig.tight_layout()
-    fig.savefig(os.path.join(out, "loss_curves.png"), dpi=150)
-    plt.close(fig)
-
-
-def errmap_bins(x, y):
-    """graph_resolution_stat binning: bin = int((x - xmin) / width) for xmin <= x <= xmax,
-    kept if 0 <= bin < bins (so x == xmax is dropped in a fixed-range view)."""
-    nb, lo, hi = ERRMAP["bins"], ERRMAP["xmin"], ERRMAP["xmax"]
-    keep = (x >= lo) & (x <= hi)
-    b = ((x[keep] - lo) / ((hi - lo) / nb)).astype(np.int64)
-    ok = (b >= 0) & (b < nb)
-    return b[ok], y[keep][ok]
+    ax.axvline(best_epoch, color=style.MUTED, lw=1, ls=":")
+    style.labels(ax, "Epoch (zero-based)", "Loss")
+    style.tag(ax, f"Best checkpoint: epoch {best_epoch}\nvalidation loss {best_loss:.6f}", loc="lower left")
+    ax.legend(loc="upper right")
+    style.save(fig, out, "loss_curves", formats=("png",))
 
 
 def plot_errmaps(smp, true, pred, targets, out):
@@ -311,9 +170,9 @@ def plot_errmaps(smp, true, pred, targets, out):
     centers = lo + (np.arange(nb) + 0.5) * width
     rows = []
     for t in targets:
-        r = (pred[t] - true[t]) / true[t]
-        for k, label in SAMPLES:
-            m = (smp == k) if k != "all" else np.ones(smp.size, bool)
+        r = relative_error(pred[t], true[t])
+        for k, _ in SAMPLES:
+            m = sample_mask(smp, k)
             b, y = errmap_bins(true[t][m], r[m])
             q = np.full((nb, 3), np.nan)
             n = np.bincount(b, minlength=nb)
@@ -323,27 +182,24 @@ def plot_errmaps(smp, true, pred, targets, out):
                 rows.append(dict(target=t, sample=k, true_lo=round(lo + i * width, 6),
                                  true_hi=round(lo + (i + 1) * width, 6), n=int(n[i]),
                                  q16=q[i, 0], median=q[i, 1], q84=q[i, 2]))
-            fig, ax = plt.subplots(figsize=(7.5, 5.6))
+            fig, ax = style.figure(size=(7.2, 5.4))
             h, xe, ye = np.histogram2d(centers[b], y, bins=(np.linspace(lo, hi, nb + 1), np.linspace(-1, 1, 201)))
             if h.sum():
-                im = ax.pcolormesh(xe, ye, np.ma.masked_where(h.T == 0, h.T), cmap="viridis",
-                                   norm=LogNorm(vmin=1, vmax=max(h.max(), 1)), shading="flat")
-                fig.colorbar(im, ax=ax, label="events")
+                im = ax.pcolormesh(xe, ye, np.ma.masked_where(h.T == 0, h.T), norm=LogNorm(vmin=1, vmax=max(h.max(), 1)),
+                                   shading="flat")
+                fig.colorbar(im, ax=ax, label="Events")
             # Bands are nested: the ±5% span sits on top of the ±10% one, so it reads darker.
-            ax.axhspan(-0.10, 0.10, color="#e66101", alpha=0.12, lw=0, label="±10% tolerance band")
-            ax.axhspan(-0.05, 0.05, color="#e66101", alpha=0.22, lw=0, label="±5% tolerance band")
-            ax.plot(centers, q[:, 1], color="black", lw=2, label="median")
-            ax.plot(centers, q[:, 0], color="#c0392b", lw=2, ls="--",
-                    label="middle 68% of events\n(16th–84th percentile)")
-            ax.plot(centers, q[:, 2], color="#c0392b", lw=2, ls="--")
+            ax.axhspan(-0.10, 0.10, color=style.BARS[1], alpha=0.10, lw=0, label="±10% band")
+            ax.axhspan(-0.05, 0.05, color=style.BARS[1], alpha=0.20, lw=0, label="±5% band")
+            ax.plot(centers, q[:, 1], color="black", lw=1.8, label="Median")
+            ax.plot(centers, q[:, 0], color=style.BARS[1], lw=1.6, ls="--", label="16th–84th percentile")
+            ax.plot(centers, q[:, 2], color=style.BARS[1], lw=1.6, ls="--")
             ax.axhline(0, color="black", lw=0.8)
-            ax.set(xlim=(lo, hi), ylim=(-1, 1), xlabel=f"{AXIS_LABEL.get(t, 'true ' + t)} [GeV]",
-                   ylabel=f"{t} error  (reco − true) / true")
-            ax.set_title(f"{label}, test set", fontsize=11)
-            ax.legend(loc="upper right", fontsize=8, frameon=True, framealpha=0.9, edgecolor="none")
-            fig.tight_layout()
-            fig.savefig(os.path.join(out, f"errmap_{t}_sample{k}.png"), dpi=150)
-            plt.close(fig)
+            ax.set(xlim=(lo, hi), ylim=(-1, 1))
+            style.labels(ax, AXIS_LABEL.get(t, f"True {t} (GeV)"), f"{t}: (reco − true) / true")
+            style.tag(ax, f"{'All samples' if k == 'all' else 'S' + k}, test set", loc="lower left")
+            ax.legend(loc="upper right", fontsize=10, frameon=True, facecolor="white", edgecolor="none", framealpha=0.9)
+            style.save(fig, out, f"errmap_{t}_sample{k}", formats=("png",))
     with open(os.path.join(out, "errmap_stats.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
@@ -351,41 +207,50 @@ def plot_errmaps(smp, true, pred, targets, out):
 
 
 def plot_ellipses(smp, true, pred, targets, ellipse, out, view=60.0):
-    """Joint error plane (trueE error %, trueLepE error %) per sample with the ellipse drawn.
-
-    Display binning is 1% over ±view; the fraction quoted is the scorecard's value.
-    """
-    from matplotlib.patches import Ellipse  # pylint: disable=C0415
-
+    """Joint error plane per sample with the ellipse drawn; display binning 1% over ±view."""
     if len(targets) < 2 or not ellipse["by_sample"]:
         return
     t0, t1 = targets[0], targets[1]
-    in_win = (true[t0] >= WINDOW[0]) & (true[t0] <= WINDOW[1])
-    x_all = 100 * (pred[t0] - true[t0]) / true[t0]
-    y_all = 100 * (pred[t1] - true[t1]) / true[t1]
+    in_win = in_headline_window(true[t0])
+    x_all = 100 * relative_error(pred[t0], true[t0])
+    y_all = 100 * relative_error(pred[t1], true[t1])
     edges = np.arange(-view, view + 1e-9, 1.0)
     a, b = ellipse["a_percent"], ellipse["b_percent"]
-    for k, label in SAMPLES:
-        m = ((smp == k) if k != "all" else np.ones(smp.size, bool)) & in_win
+    for k, _ in SAMPLES:
+        m = sample_mask(smp, k) & in_win
         h, _, _ = np.histogram2d(x_all[m], y_all[m], bins=(edges, edges))
-        fig, ax = plt.subplots(figsize=(7.2, 6.2))
+        fig, ax = style.figure(size=(6.6, 5.8))
         if h.sum():
-            im = ax.pcolormesh(edges, edges, np.ma.masked_where(h.T == 0, h.T), cmap="viridis",
+            im = ax.pcolormesh(edges, edges, np.ma.masked_where(h.T == 0, h.T),
                                norm=LogNorm(vmin=1, vmax=max(h.max(), 1)), shading="flat")
-            fig.colorbar(im, ax=ax, label="events / (1% × 1%)", shrink=0.85)
+            fig.colorbar(im, ax=ax, label="Events / (1% × 1%)", shrink=0.85)
         frac = ellipse["by_sample"][k]["fraction"]
-        ax.add_patch(Ellipse((0, 0), 2 * a, 2 * b, fill=False, color="#e66101", lw=2.5,
-                             label=f"ellipse ±{a:g}% × ±{b:g}%{' (provisional)' if ellipse['provisional'] else ''}"
-                                   f"\n{frac:.1%} of events inside"))
-        ax.axhline(0, color="white", lw=0.6, alpha=0.6)
-        ax.axvline(0, color="white", lw=0.6, alpha=0.6)
-        ax.set(xlim=(-view, view), ylim=(-view, view), aspect="equal",
-               xlabel=f"{t0} error  (reco − true) / true  [%]", ylabel=f"{t1} error  (reco − true) / true  [%]")
-        ax.set_title(f"{label}, test set, true {t0} {WINDOW[0]:g}–{WINDOW[1]:g} GeV", fontsize=11)
-        ax.legend(loc="upper right", fontsize=8, frameon=True, framealpha=0.9, edgecolor="none")
-        fig.tight_layout()
-        fig.savefig(os.path.join(out, f"ellipse_sample{k}.png"), dpi=150)
-        plt.close(fig)
+        ax.add_patch(Ellipse((0, 0), 2 * a, 2 * b, fill=False, color=style.BARS[1], lw=2.2,
+                             label=f"±{a:g}% × ±{b:g}%{' (provisional)' if ellipse['provisional'] else ''}: "
+                                   f"{frac:.1%} inside"))
+        ax.set(xlim=(-view, view), ylim=(-view, view), aspect="equal")
+        style.labels(ax, f"{t0} error [%]", f"{t1} error [%]")
+        style.tag(ax, f"{'All samples' if k == 'all' else 'S' + k}, true {t0} {WINDOW[0]:g}–{WINDOW[1]:g} GeV")
+        ax.legend(loc="lower right", fontsize=10, frameon=True, facecolor="white", edgecolor="none", framealpha=0.9)
+        style.save(fig, out, f"ellipse_sample{k}", formats=("png",))
+
+
+# ---------- main ----------
+def write_peak_only(run_dir):
+    """Old peak_metrics.py behaviour: RUN_DIR/scorecard/peak_metrics.json, rewritten only if it changes."""
+    card = data.scorecard_of(run_dir)
+    model_dir = card["model_dir"]
+    cfg = json.load(open(os.path.join(model_dir, "input.json")))
+    smp, true, pred, fp = data.load_test_predictions(cfg, model_dir)
+    if fp != card["test_set"]["fingerprint_sha256"]:
+        sys.exit("test-set fingerprint differs from the scorecard's")
+    peak = build_peak(smp, true, pred, fp, model_dir)
+    path = os.path.join(run_dir, "scorecard", "peak_metrics.json")
+    text = json.dumps(peak, indent=1, sort_keys=True) + "\n"
+    if not (os.path.exists(path) and open(path).read() == text):
+        open(path, "w").write(text)
+    for s, v in peak["by_sample"].items():
+        print(f"S{s}: peak_pull {v['peak_pull']:+.2f} pts, pull_slope {v['pull_slope']}")
 
 
 def main():
@@ -393,9 +258,13 @@ def main():
     p.add_argument("run_dir", help="run folder (the config's save_path)")
     p.add_argument("--model-dir", help="default: newest RUN_DIR/model_*/ with a result.csv")
     p.add_argument("--out-dir", help="new output directory (default RUN_DIR/scorecard)")
+    p.add_argument("--peak-only", action="store_true", help="only (re)write RUN_DIR/scorecard/peak_metrics.json")
     a = p.parse_args()
+    if a.peak_only:
+        write_peak_only(a.run_dir)
+        return
 
-    model_dir = a.model_dir or find_model_dir(a.run_dir)
+    model_dir = a.model_dir or data.find_model_dir(a.run_dir)
     out = a.out_dir or os.path.join(a.run_dir, "scorecard")
     if os.path.exists(out):
         sys.exit(f"refusing to overwrite {out}")
@@ -406,23 +275,21 @@ def main():
         sys.exit(f"{ancestor} is not writable (frozen run folder?); pass --out-dir")
     cfg = json.load(open(os.path.join(model_dir, "input.json")))
 
-    smp, true, pred, fingerprint = load_test_predictions(cfg, model_dir)
+    smp, true, pred, fingerprint = data.load_test_predictions(cfg, model_dir)
     print(f"aligned {smp.size} test predictions with {cfg['data_path']}")
     log = os.path.join(a.run_dir, "train.log")
-    losses, n_sessions = parse_losses(log) if os.path.exists(log) else ([], 0)
+    losses, n_sessions = data.parse_losses(log) if os.path.exists(log) else ([], 0)
     if n_sessions > 1:
         print(f"warning: {log} holds {n_sessions} training sessions; using the last one")
 
     sc = build_scorecard(cfg, model_dir, a.run_dir, smp, true, pred, fingerprint, losses, n_sessions)
     os.makedirs(out)
-    text = json.dumps(sc, indent=2, sort_keys=True, allow_nan=False) + "\n"
-    with open(os.path.join(out, "scorecard.json"), "w") as f:
-        f.write(text)
-    digest = hashlib.sha256(text.encode()).hexdigest()
-    with open(os.path.join(out, "scorecard.sha256"), "w") as f:
-        f.write(f"{digest}  scorecard.json\n")
+    digest = report.write_json(os.path.join(out, "scorecard.json"), sc, sidecar=True)
     with open(os.path.join(out, "scorecard.md"), "w") as f:
         f.write(render_md(sc, cfg["target"]))
+    with open(os.path.join(out, "peak_metrics.json"), "w") as f:
+        f.write(json.dumps(build_peak(smp, true, pred, fingerprint, model_dir), indent=1, sort_keys=True) + "\n")
+    style.use()
     best = json.load(open(os.path.join(model_dir, "checkpoint_metadata.json")))["best_model"]
     plot_losses(losses, best["epoch"], best["validation_loss"], out)
     plot_errmaps(smp, true, pred, cfg["target"], out)

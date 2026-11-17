@@ -9,7 +9,7 @@ The sample mix is kept (each sample's weights have mean 1 per event).
 Compared against: per-sample flattening over the full range (each sample's min-max, repo class) and pooled
 FlatSpectraWeights (alpha 0.01 and 0.05, 500 bins), all rescaled to mean event weight 1.
 
-Usage: python -I pcnumu/eval/flattening_scheme_preview.py --cache <train_<horn>.npz> --tag fhc --out <dir>
+Usage: python -I pcnumu/studies/20261103_flattening-scans/flattening_scheme_preview.py --cache <train_<horn>.npz> --tag fhc --out <dir>
 The cache holds y = trueE and s = sample of the train rows (written by flattening_scan.py --cache).
 """
 

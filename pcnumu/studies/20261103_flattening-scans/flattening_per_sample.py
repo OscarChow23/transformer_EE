@@ -8,7 +8,7 @@ then rescaled so sum(w_k) = N_k (sample mix and mean event weight 1 are kept; th
 separate choice). "Core" range of a sample = [p1, min(p99, xmax)] of its trueE; flatness = max/min of
 the weighted density in 0.5 GeV bins over the core.
 
-Usage: python -I pcnumu/eval/flattening_per_sample.py --cache <train_<horn>.npz> --out <dir> --tag fhc
+Usage: python -I pcnumu/studies/20261103_flattening-scans/flattening_per_sample.py --cache <train_<horn>.npz> --out <dir> --tag fhc
        [--range 0,10] [--bins 500] [--target-flatness 1.5]
 The cache is the npz written by flattening_scan.py --cache (arrays y = trueE, s = sample, train rows).
 """

@@ -16,7 +16,7 @@ Valid uses the train weighter; we report its S1 weight share with valid kept who
 subsampled by the same rule (decision 4).
 
 Usage (env transformer_ee):
-  python -I pcnumu/eval/r07_s1_subsample_preview.py --horn fhc --config <r05 input.json> --out <dir>
+  python -I pcnumu/studies/20261104_r07-s1-subsample/r07_s1_subsample_preview.py --horn fhc --config <r05 input.json> --out <dir>
 """
 
 import argparse

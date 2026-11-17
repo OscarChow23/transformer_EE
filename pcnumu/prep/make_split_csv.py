@@ -26,6 +26,9 @@ from datetime import datetime
 import numpy as np
 import polars as pl
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from transformer_ee.utils.event_hash import event_uniform  # noqa: E402  (shared with the loader's subsample)
+
 ID_COLS = ["run", "subrun", "cycle", "evt", "subevt"]
 KEEP_ALWAYS = ID_COLS + ["sample", "trueE", "trueLepE", "trueHadE", "weight", "mode"]
 NONFINITE = ["nan", "-nan", "inf", "-inf", "+inf", "infinity", "-infinity"]
@@ -39,20 +42,11 @@ def sha256(path):
     return h.hexdigest()
 
 
-def splitmix64(x):
-    x = (x + np.uint64(0x9E3779B97F4A7C15)) & np.uint64(0xFFFFFFFFFFFFFFFF)
-    x = (x ^ (x >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
-    x = (x ^ (x >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
-    return x ^ (x >> np.uint64(31))
-
-
 def assign_split(df, seed, f_test, f_valid):
     run, sub, cyc, evt = (df[c].cast(pl.UInt64).to_numpy() for c in ID_COLS[:4])
     if sub.max() >= 1000 or cyc.max() >= 1000 or evt.max() >= 10**6 or run.max() >= 10**7:
         raise ValueError("ID out of range for the packed event key; widen the packing")
-    key = ((run * np.uint64(1000) + sub) * np.uint64(1000) + cyc) * np.uint64(10**6) + evt
-    with np.errstate(over="ignore"):
-        u = splitmix64(key ^ np.uint64(seed)).astype(np.float64) / 2.0**64
+    u = event_uniform(run, sub, cyc, evt, seed)
     return np.where(u < f_test, "test", np.where(u < f_test + f_valid, "valid", "train"))
 
 

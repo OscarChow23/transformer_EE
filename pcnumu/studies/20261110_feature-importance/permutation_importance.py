@@ -26,11 +26,14 @@ import polars as pl
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path[:0] = [HERE, os.path.dirname(os.path.dirname(HERE))]  # python -I drops the cwd from the import path
-from eval_by_sample import SAMPLES, STYLE, WINDOW, stats, style_axes  # noqa: E402
+sys.path[:0] = [HERE, os.path.dirname(os.path.dirname(os.path.dirname(HERE)))]  # python -I drops the cwd
 from feature_correlation import group  # noqa: E402
-from scorecard import ID_COLUMNS, code_version, ellipse_axes, ellipse_fraction  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402  (Agg backend already set by eval_by_sample)
+from pcnumu.core import style  # noqa: E402
+from pcnumu.core.data import ID_COLUMNS, code_version  # noqa: E402
+from pcnumu.core.metrics import SAMPLES, WINDOW, ellipse_axes, ellipse_fraction, stats  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402  (Agg backend set by pcnumu.core.style)
+
+STYLE = style.SAMPLE_STYLE
 from transformer_ee.inference.pred import Predictor  # noqa: E402
 
 # Regions are cuts on true trueE [GeV], applied to both targets. The last is the scorecard's window.
@@ -201,7 +204,7 @@ def plot(out, model_name):
                             label=f"{name}{'' if m == 'migration_below_3' else ', ' + REG[reg]}   (unshuffled {fmt(b0[t, m, reg])})")
             ax.axhline(0, color="black", lw=0.8)
             ax.set_ylabel(ylabel)
-            style_axes(ax)
+            style.labels(ax)
             ax.legend(frameon=False, fontsize=8.5, title=f"one input shuffled at a time · point = mean of {d['seed'].nunique()} shuffles, bar = range", title_fontsize=8, alignment="left")
             ax.set_xticks(x, labels, rotation=90, fontsize=8)
             ax.set_xlim(-0.5, len(names) - 0.5)

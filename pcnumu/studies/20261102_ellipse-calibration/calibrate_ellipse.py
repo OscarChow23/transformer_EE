@@ -20,9 +20,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from eval_by_sample import SAMPLES, STYLE, WINDOW, find_model_dir, style_axes  # noqa: E402
-from scorecard import ellipse_fraction, load_test_predictions  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from pcnumu.core import style  # noqa: E402
+from pcnumu.core.data import find_model_dir, load_test_predictions  # noqa: E402
+from pcnumu.core.metrics import SAMPLES, WINDOW, ellipse_fraction  # noqa: E402
+
+STYLE = style.SAMPLE_STYLE
 
 
 def main():
@@ -73,7 +76,7 @@ def main():
                     ls=":", lw=1)
         ax.set(xlabel="circle radius a = b  [% error on each target]", title=run.replace("NOvA_PC_Numu_mprod6_1_fd_", ""))
         ax.title.set_fontsize(9)
-        style_axes(ax)
+        style.labels(ax)
     axes[0][0].set_ylabel("fraction of test events inside (solid: unbinned, dotted: binned)")
     axes[0][0].legend(frameon=False, fontsize=8, loc="lower right")
     fig.tight_layout()

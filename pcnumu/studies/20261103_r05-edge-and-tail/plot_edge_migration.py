@@ -2,7 +2,7 @@
 Reads the CSV written by r05_edge_migration_fine.py (columns horn, sample, true_lo, true_hi, n_test,
 leak_frac, share_of_window). Top row: fraction of events in each true-energy bin reconstructed inside the
 window. Bottom row: those events as a share of everything of that sample reconstructed in the window.
-Usage: python -I pcnumu/eval/plot_edge_migration.py --csv <r05_edge_migration_fine.csv> --out <png>
+Usage: python -I pcnumu/studies/20261103_r05-edge-and-tail/plot_edge_migration.py --csv <r05_edge_migration_fine.csv> --out <png>
 """
 import argparse
 import csv

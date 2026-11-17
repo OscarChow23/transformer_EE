@@ -5,7 +5,7 @@ r05 = all train rows, alpha 0.05; r06 = all train rows, alpha 0.01; r07 = train 
 weight above 10 GeV (pooled and within S3), flatness ratios (density 1.5-2.5 GeV over 4-5 / 8-10 GeV),
 mean event weight. Writes compare_<horn>.csv and compare_<horn>.png.
 
-Usage: python -I pcnumu/eval/r07_alpha_compare.py --rows <preview/rows_<horn>.npz> --horn fhc --out <dir>
+Usage: python -I pcnumu/studies/20261104_r07-s1-subsample/r07_alpha_compare.py --rows <preview/rows_<horn>.npz> --horn fhc --out <dir>
 """
 
 import argparse
@@ -29,7 +29,7 @@ def main():
     ap.add_argument("--keep", type=float, default=0.5)
     ap.add_argument("--sub-seed", type=int, default=20261104)
     a = ap.parse_args()
-    sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(HERE))))
     from transformer_ee.utils.weights import FlatSpectraWeights  # pylint: disable=C0415
     import matplotlib  # pylint: disable=C0415
     matplotlib.use("Agg")

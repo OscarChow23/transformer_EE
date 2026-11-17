@@ -11,7 +11,7 @@ r per pair uses only observations where both features are valid (pandas pairwise
 within that set);
 invalid measurements become NaN by the rules in invalid_mask(), never zero.
 
-  python -I pcnumu/eval/feature_correlation.py --config MODEL_DIR/input.json --raw RAW.csv.xz \
+  python -I pcnumu/studies/20261110_feature-importance/feature_correlation.py --config MODEL_DIR/input.json --raw RAW.csv.xz \
       --out-dir DIR [--same-as OTHER/input.json ...] [--n-slices 100000] [--seed 20261109] [--cache F] [--method spearman]
 """
 import argparse

@@ -9,7 +9,7 @@ import polars as pl
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "pcnumu/eval"))
+sys.path.insert(0, str(ROOT / "pcnumu/studies/20261104_r07-s1-subsample"))
 from pcnumu.prep.make_split_csv import assign_split  # noqa: E402
 from r07_s1_subsample_preview import packed_key, unit_hash  # noqa: E402  (independent copy used for the preview)
 from transformer_ee.dataloader.load import get_train_valid_test_dataloader  # noqa: E402
