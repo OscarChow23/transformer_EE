@@ -4,9 +4,12 @@
 Matches result.csv (test-set predictions, written in test-row file order) to the test rows
 of the run's data file, checks the match row by row on the true energies, and writes to
 <model_dir>/eval_by_sample/:
-  summary.csv / summary.md      bias, resolution, tail fractions per sample and combined
+  summary.csv / summary.md      bias, resolution, tail fractions per sample and combined: all E, the
+                                0.5-6 GeV headline window, and trueE 6-10 / 10-20 / >20 GeV
   relerr_<target>.png           relative-error distributions, samples 1/2/3 + all
+  relerr_<target>_above6.png    the same for trueE > 6 GeV
   vs_true_<target>.png          bias and resolution vs true value (two panels, shared x)
+  vs_true_<target>_wide.png     the same to 50 GeV, variable bins, log x, 6 GeV marked
   summary_<target>.png          bias and resolution per sample, 0.5-6 GeV trueE window
   flattening_<target0>.png      training-row spectrum before/after the run's flattening weights
 
@@ -35,6 +38,10 @@ STYLE = {"1": dict(color="#2a78d6", marker="o", ls="-"), "2": dict(color="#eb683
          "3": dict(color="#1baf7a", marker="^", ls="-"), "all": dict(color="#2b2b2b", marker="D", ls="--")}
 INK, MUTED, GRID = "#2b2b2b", "#6b6b6b", "#e4e3df"
 WINDOW = (0.5, 6.0)  # GeV, applied on trueE
+WIN_LABEL = f"trueE {WINDOW[0]}-{WINDOW[1]} GeV"
+# Supplementary trueE ranges above the headline window: table rows and the *_wide / *_above6 plots.
+HIGH_E = [(6.0, 10.0), (10.0, 20.0), (20.0, np.inf)]
+WIDE_EDGES = np.array([0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12.5, 15, 20, 30, 50])
 MIN_PER_BIN = 50
 
 
@@ -253,7 +260,11 @@ def main():
         r = (pred[t] - true[t]) / true[t]
         for k, label in SAMPLES:
             m = masks[k]
-            for win, wm in (("all E", np.ones_like(m)), (f"trueE {WINDOW[0]}-{WINDOW[1]} GeV", in_win)):
+            wins = [("all E", np.ones_like(m)), (WIN_LABEL, in_win)]
+            t0 = true[targets[0]]
+            wins += [(f"trueE {lo:g}-{hi:g} GeV" if np.isfinite(hi) else f"trueE > {lo:g} GeV",
+                      (t0 > lo) & (t0 <= hi)) for lo, hi in HIGH_E]
+            for win, wm in wins:
                 s = stats(r[m & wm])
                 rows.append(dict(target=t, sample=k, window=win, n_outside_window=int(np.sum(m & ~in_win)), **s))
     summary = pl.DataFrame(rows)
@@ -322,8 +333,63 @@ def main():
         fig.savefig(os.path.join(out, f"vs_true_{t}.png"), dpi=150)
         plt.close(fig)
 
+        # 2b) same, extended to high true values (variable-width bins, log x); headline window marked
+        centers = np.sqrt(WIDE_EDGES[1:] * WIDE_EDGES[:-1])
+        idx = np.digitize(true[t], WIDE_EDGES) - 1
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7, 6.5), sharex=True)
+        for k, label in SAMPLES:
+            st = STYLE[k]
+            b, s_ = [], []
+            for i in range(len(centers)):
+                ri = r[masks[k] & (idx == i)]
+                if ri.size >= MIN_PER_BIN:
+                    q16, q50, q84 = np.quantile(ri, [0.16, 0.5, 0.84])
+                    b.append(q50); s_.append((q84 - q16) / 2)
+                else:
+                    b.append(np.nan); s_.append(np.nan)
+            kw = dict(color=st["color"], marker=st["marker"], ls=st["ls"], lw=2, ms=5, label=label)
+            ax1.plot(centers, np.array(b) * 100, **kw)
+            ax2.plot(centers, np.array(s_) * 100, **kw)
+        ax1.axhline(0, color=MUTED, lw=1)
+        for ax in (ax1, ax2):
+            ax.axvline(WINDOW[1], color=MUTED, lw=1, ls=":")
+            ax.set_xscale("log")
+            style_axes(ax)
+        ax1.annotate(f"headline window ends ({WINDOW[1]:g} GeV)", (WINDOW[1], 1), xycoords=("data", "axes fraction"),
+                     xytext=(4, -12), textcoords="offset points", fontsize=8, color=MUTED)
+        ax2.set_xticks([0.5, 1, 2, 3, 6, 10, 20, 50], ["0.5", "1", "2", "3", "6", "10", "20", "50"])
+        ax1.set_ylabel("bias = median r  [%]")
+        ax2.set_ylabel("resolution = (q84 − q16)/2  [%]")
+        ax2.set_xlabel(f"true {t} [{unit}] (log scale)")
+        handles, labels = ax1.get_legend_handles_labels()
+        fig.suptitle(f"{t}: bias and resolution vs true value, to {WIDE_EDGES[-1]:g} GeV "
+                     f"(bins with ≥{MIN_PER_BIN} events)", color=INK)
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.955), ncol=2, frameon=False, fontsize=8)
+        fig.tight_layout(rect=(0, 0, 1, 0.88))
+        fig.savefig(os.path.join(out, f"vs_true_{t}_wide.png"), dpi=150)
+        plt.close(fig)
+
+        # 2c) relative-error distributions for trueE above the headline window
+        above = true[targets[0]] > WINDOW[1]
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        for k, label in SAMPLES:
+            st = STYLE[k]
+            sel = r[masks[k] & above]
+            if sel.size >= MIN_PER_BIN:
+                ax.hist(sel, bins=np.linspace(-1, 1, 101), density=True, histtype="step", lw=2, color=st["color"],
+                        ls=st["ls"], label=f"{label} (n={sel.size})")
+        ax.axvline(0, color=MUTED, lw=1)
+        ax.set_xlabel(f"(pred − true) / true, {t}")
+        ax.set_ylabel("density (each curve normalised to 1)")
+        ax.set_title(f"{t}: relative error, trueE > {WINDOW[1]:g} GeV")
+        style_axes(ax)
+        ax.legend(frameon=False, fontsize=8)
+        fig.tight_layout()
+        fig.savefig(os.path.join(out, f"relerr_{t}_above6.png"), dpi=150)
+        plt.close(fig)
+
         # 3) per-sample summary in the window (two panels)
-        sub = [x for x in rows if x["target"] == t and x["window"].startswith("trueE")]
+        sub = [x for x in rows if x["target"] == t and x["window"] == WIN_LABEL]
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 3.8))
         xs = np.arange(len(SAMPLES))
         for i, (k, label) in enumerate(SAMPLES):
