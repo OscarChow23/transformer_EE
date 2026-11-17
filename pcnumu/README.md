@@ -1,39 +1,52 @@
-# pcnumu/: PC numu additions on top of upstream
+# pcnumu/ — PC numu energy estimation on top of TransformerEE
 
-Everything here was written for the PC numu recovery work and is not part of
-`joshuabarrow221/transformer_EE`. It lives under one directory so upstream files
-stay untouched and `wide_model_test` merges cleanly. Code changes to upstream
-files are separate commits (`load.py`, `train.py`).
+Code for the NOvA peripheral/contained numu (PC numu) energy-estimation study: data preparation,
+a gated experiment loop for training trials, evaluation of trained models, and the scripts behind
+studies and talk figures. It sits on the TransformerEE library (`transformer_ee/`, `train_wide.py`,
+upstream `joshuabarrow221/transformer_EE`) and keeps everything study-specific in this one folder.
 
-| directory | contents |
-|---|---|
-| `eval/` | `eval_by_sample.py` (per-sample test-set evaluation), `compare_runs.py` (two-run comparison), `test_conditional_maps.py`, `README_diagnostics.md` |
-| `prep/` | `make_split_csv.py` (derived CSV with a hashed per-event `split` column), its sbatch, `merge_csv.sh` |
-| `pretrain-checklist/` | the Claude Code skill (`SKILL.md`, `scripts/precheck.py`, `references/questions.md`) and the sbatch gate (`scripts/gate_hook.py`, `settings-hook.json`) |
+**Dependency rule:** `pcnumu/` imports from `transformer_ee/`; the library never imports from
+`pcnumu/`. Library changes are separate commits so they can be proposed upstream on their own.
 
-## Where run outputs live
+## Layout
 
-Outside Git, in `/data/nova/chow/pcnumu-runs/` (layout in its `README.md`): one folder per
-trial, `rNN_<short-description>/`, with `fhc/` and `rhc/` run folders that are the configs'
-`save_path`. `train.py` writes `model_<hash>/` (checkpoints, `loss.png`, `result.csv`) inside
-the run folder; `eval/scorecard.py` writes `scorecard/` next to it by default.
-r01–r05 outputs stay in the frozen `/data/nova/chow/transformerEE/runs/`.
+| Folder | What it is | Rerun? |
+|---|---|---|
+| `core/` | **Shared library**: loading and aligning test predictions, the metric definitions, the regional comparison, the house plot style, shared plots, writers. See [`core/__init__.py`](core/__init__.py). | imported |
+| `eval/` | **Commands** run on every trained model: `scorecard.py`, `eval_by_sample.py`, `compare.py` (runs / regional / render), `leaderboard.py`, `figindex.py`. See [`eval/README.md`](eval/README.md). | yes |
+| `tests/` | Tests for `core/` and the commands. | yes |
+| `prep/` | Derived dataset with a hashed per-event `split` column (`make_split_csv.py`) and its batch job. | per dataset |
+| `loop/` | Experiment loop: trial spec → effective config → GO record → batch submission (`loop.py`, job template). | per trial |
+| `trials/` | One `trial.yaml` per trial (`rNN_<description>`): hypothesis, baseline, settings, status. | — |
+| `pretrain-checklist/` | The pre-launch gate: checklist skill, `precheck.py`, and the hook that blocks unsigned submissions. | per trial |
+| `studies/YYYYMMDD_topic/` | One-off investigation scripts, kept as the record of what was run. Not maintained. | no |
+| `plots/talks/YYYYMMDD_name/` | Scripts that made one talk's figures (record). | no |
 
-## Imported unchanged from the old working tree
+Run outputs never go in this repository. Trials are written to `/data/nova/chow/pcnumu-runs/`
+(one folder per trial, `fhc/` and `rhc/` inside); everything made *about* runs (studies, figures,
+talks, plans) to `/data/nova/chow/pcnumu-analysis/`. The map is `/data/nova/chow/README.md`.
 
-These files were copied byte for byte from `/data/nova/chow/transformerEE`
-(frozen) and still contain its absolute paths. They have not been re-pointed at
-this clone.
+## Running
 
-- `pretrain-checklist/scripts/precheck.py`: `BASE` and `--code-dir` point at the old tree.
-  It also replicates the old launcher's `num_layers = nhead` fill (`kset(mkw,
-  "num_layers", args.nhead)`), which this branch fixes (`args.num_layers`, upstream
-  commit `144a149`). Re-verify before relying on it for a JSON without `model.kwargs.num_layers`.
-- `pretrain-checklist/scripts/gate_hook.py`: `CHECKLIST_DIR` defaults to the old tree's
-  `job_scripts/checklists`, which is read-only once frozen. Set `PRETRAIN_CHECKLIST_DIR`
-  or change the default.
-- `eval/eval_by_sample.py`: `--code-dir` defaults to the old tree's `code/`.
-- `prep/*.sbatch`: paths into the old tree's `datasets/` and `configs/`.
+Python: `/data/nova/chow/miniforge3/envs/transformer_ee/bin/python -I` (isolated mode; every command
+adds the repository root to its import path itself).
+
+```bash
+python -I pcnumu/eval/scorecard.py RUN_DIR                       # after training: scorecard + peak metrics
+python -I pcnumu/eval/leaderboard.py --md model-comparison.md    # table of every scored trial
+python -I pcnumu/eval/compare.py regional --horn fhc --sample 3 --out-dir DIR
+python -I pcnumu/eval/compare.py render DIR/fhc/s3
+python -I pcnumu/tests/test_metrics.py                           # tests: each file runs standalone
+```
+
+## Conventions
+
+- **Metrics** are defined once, in `core/metrics.py` (and `core/regional.py` for the regional
+  comparison). Commands and studies import them; they never re-implement a definition.
+- **Plots** use the house style, `core/style.py`, and its fixed colours. See `AGENTS.md`.
+- **Provenance:** every output records the code commit and dirty flag, file hashes and the test-set
+  fingerprint. Outputs refuse to overwrite an existing folder.
+- **Training** is launched only through `loop/loop.py submit` with a signed GO record.
 
 ## Installing the skill and gate
 
