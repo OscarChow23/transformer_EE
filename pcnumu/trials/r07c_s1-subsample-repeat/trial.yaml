@@ -4,7 +4,7 @@
 # so only weight initialisation, dropout and batch order differ between repeats.
 # Deliberately no noise: this measures r07's own spread, not a noisy configuration.
 trial: r07c_s1-subsample-repeat
-status: planned
+status: done
 baseline: r07_s1-subsample
 hypothesis: >-
   Identical r07 config retrained unseeded. The leaderboard metrics differ from r07 only by

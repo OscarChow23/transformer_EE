@@ -3,7 +3,7 @@
 # second brain findings/2026-11-10-r08-flattening-shape-planning.md. Implementation: plans/r08-implementation-plan.md.
 # No input noise: a decided exception to the always-noise rule (one change at a time against r05).
 trial: r08_per-sample-flat
-status: planned
+status: done
 baseline: r05_v3data-allsamples_v3features
 hypothesis: >-
   Flattening each sample's own trueE spectrum over 1-5 GeV (S1 alpha 0.05, S2/S3 alpha 0.02; easing back

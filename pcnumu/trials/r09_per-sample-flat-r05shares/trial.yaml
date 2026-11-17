@@ -4,7 +4,7 @@
 # (pcnumu-runs/r08_per-sample-flat/check1_loader_weights.txt; recomputed on the cached train rows).
 # No input noise: same decided exception as r08.
 trial: r09_per-sample-flat-r05shares
-status: planned
+status: done
 baseline: r08_per-sample-flat
 hypothesis: >-
   Same per-sample shapes as r08, but each sample keeps r05's share of the total training weight
