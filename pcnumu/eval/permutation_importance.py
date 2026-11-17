@@ -7,7 +7,7 @@ Shuffles one input at a time across the validation events (the model is not retr
 records how much bias, resolution and ellipse fraction change against the unshuffled baseline.
 Before any shuffle, an unshuffled pass over the test rows must reproduce the model's result.csv
 and scorecard.json, or the run stops. Plan and decisions D1-D22:
-pcnumu-runs/plans/feature-importance-permutation-grill-handoff-20261110.md
+pcnumu-analysis/plans/feature-importance-permutation-grill-handoff-20261110.md
 
 Writes importance.csv (one row per entry, seed, target, region, sample, metric), figures
 (importance_{resolution,bias,ellipse_migration}_sample{1,2,3,all}.png/pdf) and README.md into OUT. If OUT/importance.csv exists, only the figures are redrawn.

@@ -1,7 +1,7 @@
 """PerSampleFlatWeights (r08): weights equal the agreed recipe, are fitted on train only, and fail loudly on bad input.
 
 The spec is `reference()` below, copied from the r08 preview
-(/data/nova/chow/pcnumu-runs/analysis/r08-flattening-preview/plot_regimes.py: weights()).
+(pcnumu/studies/20261110_r08-flattening-preview/plot_regimes.py: weights()).
 """
 import sys
 import unittest

@@ -1,7 +1,7 @@
 """Curated figure records for slides and the thesis.
 
 A figure record is a PNG plus a sidecar markdown file with the same stable ID, kept in one flat folder
-(default /data/nova/chow/pcnumu-runs/figures/):
+(default /data/nova/chow/pcnumu-analysis/figures/):
 
     F-20261103-taper-tradeoff-fhc.png
     F-20261103-taper-tradeoff-fhc.md      <- frontmatter (fields below) + free-text caption
@@ -26,7 +26,7 @@ import shutil
 import socket
 import sys
 
-DEFAULT_DIR = "/data/nova/chow/pcnumu-runs/figures"
+DEFAULT_DIR = "/data/nova/chow/pcnumu-analysis/figures"
 FIELDS = ["id", "date", "machine", "title", "claim", "numbers", "source", "script", "commit", "command",
           "inputs", "findings", "thesis", "slides", "status", "superseded_by"]
 

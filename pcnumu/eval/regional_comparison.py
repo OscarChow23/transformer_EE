@@ -1,7 +1,7 @@
 """Regional comparison of pc-numu models on the same held-out test events, one horn and sample at a time.
 
     python pcnumu/eval/regional_comparison.py --horn fhc --sample 3 \
-        --out-dir /data/nova/chow/pcnumu-runs/analysis/regional-comparison-v1
+        --out-dir /data/nova/chow/pcnumu-analysis/studies/regional-comparison-v1
 
 Each model directory comes from its trial's saved <trial>/<horn>/scorecard/scorecard.json. Predictions
 are aligned to the dataset's test rows by position (result.csv has no event IDs) with the same checks
