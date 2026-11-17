@@ -515,7 +515,7 @@ def main():
     p = sp.add_parser("regional", help="paired regional comparison of r05/r06/r08/r09")
     p.add_argument("--horn", required=True, choices=["fhc", "rhc"])
     p.add_argument("--sample", required=True, choices=["1", "2", "3"])
-    p.add_argument("--out-dir", required=True, help="version directory, e.g. pcnumu-analysis/studies/regional-comparison-v2")
+    p.add_argument("--out-dir", required=True, help="version directory, e.g. pcnumu-analysis/studies/YYYYMMDD_regional-comparison-v2")
     p.add_argument("--runs-root", default=RUNS_ROOT)
     p.add_argument("--n-boot", type=int, default=500)
     p.add_argument("--seed", type=int, default=20261116)
