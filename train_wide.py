@@ -520,12 +520,14 @@ def main():
     print("Start Time: " + str(starttime))
 
     # Same initial weights and batch order for a given seed (GPU kernels may still differ slightly).
-    import random
-    import numpy as np
-    random.seed(cfg["seed"])
-    np.random.seed(cfg["seed"])
-    torch.manual_seed(cfg["seed"])
-    print(f"[INFO] Seeded random/numpy/torch with seed {cfg['seed']} (torch {torch.__version__})")
+    # Configs without a seed keep the previous, unseeded behaviour.
+    if cfg.get("seed") is not None:
+        import random
+        import numpy as np
+        random.seed(cfg["seed"])
+        np.random.seed(cfg["seed"])
+        torch.manual_seed(cfg["seed"])
+        print(f"[INFO] Seeded random/numpy/torch with seed {cfg['seed']} (torch {torch.__version__})")
 
     my_trainer = MVtrainer(cfg, logger=my_logger)
     my_trainer.train_LCL()
