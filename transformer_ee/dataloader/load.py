@@ -130,12 +130,10 @@ def get_train_valid_test_dataloader(config: dict):  # pylint: disable=R0914
                 # drops a hashed share of its train/valid rows; test rows are never touched.
                 if "test" in sub["splits"]:
                     raise ValueError("subsample must not touch test rows")
-                from pcnumu.prep.make_split_csv import splitmix64  # same hash as the split column  # pylint: disable=C0415
+                from transformer_ee.utils.event_hash import event_uniform  # pylint: disable=C0415
 
-                run, srun, cyc, evt = (df[c].cast(pl.UInt64).to_numpy() for c in ("run", "subrun", "cycle", "evt"))
-                key = ((run * np.uint64(1000) + srun) * np.uint64(1000) + cyc) * np.uint64(10**6) + evt
-                with np.errstate(over="ignore"):
-                    u = splitmix64(key ^ np.uint64(sub["seed"])).astype(np.float64) / 2.0**64
+                ids = (df[c].cast(pl.UInt64).to_numpy() for c in ("run", "subrun", "cycle", "evt"))
+                u = event_uniform(*ids, sub["seed"])  # same per-event hash as the split column
                 drop = ((df["sample"].to_numpy() == sub["sample"])
                         & df[split_column].is_in(sub["splits"]).to_numpy() & (u >= sub["keep"]))
                 df = df.filter(pl.Series(~drop))
