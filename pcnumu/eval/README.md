@@ -11,9 +11,9 @@ output folder.
 | `eval_by_sample.py --config CFG` | per-sample diagnostics of one run | summary tables and plots per sample, incl. above 6 GeV |
 | `eval_by_sample.py --config CFG --flattening-only DIR` | at the start of every training job (job template) | training spectrum before/after the flattening weights |
 | `compare.py runs --run ... --out-dir DIR` | quick like-for-like comparison of any runs | summary table, error distributions, bias/resolution vs energy |
-| `compare.py regional --horn H --sample S --out-dir DIR` | paired regional comparison of r05/r06/r08/r09 | `DIR/<horn>/s<sample>/summary.json`, counts, checks |
+| `compare.py regional --horn H --sample S --out-dir DIR` | paired regional comparison of r05/r06/r08/r09; S = 1, 2, 3 or 23 (S2+S3 pooled) | `DIR/<horn>/s<sample>/summary.json`, counts, checks |
 | `compare.py render DIR/fhc/sS [DIR/rhc/sS]` | after `regional` | five bar plots and `comparison.md` from `summary.json` |
-| `leaderboard.py [--md PATH]` | after each new scorecard | `pcnumu-runs/leaderboard_<horn>.csv` and the model-comparison note |
+| `leaderboard.py [--md PATH]` | after each new scorecard or regional comparison | `pcnumu-runs/leaderboard_<horn>.csv` and the model-comparison note (per-sample regional tables from `--regional`) |
 | `figindex.py add/index` | when a figure is worth keeping | figure records in `/data/nova/chow/pcnumu-analysis/figures/` |
 
 Every command prints its full usage with `--help`. Definitions are in `pcnumu/core/metrics.py`
